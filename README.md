@@ -12,7 +12,7 @@ Every switch shows the **real state read from Windows right now**, every change 
 Open **PowerShell as Administrator** and paste:
 
 ```powershell
-irm https://raw.githubusercontent.com/ozzyhn/optimizaciones-de-ozzyhn/main/ozzyhn.ps1 | iex
+irm https://raw.githubusercontent.com/ozzyhntweaks/optimizaciones-de-ozzyhn/main/ozzyhn.ps1 | iex
 ```
 
 Or download **`Run-Ozzyhn.cmd`** and double-click it (it asks for admin rights by itself).
