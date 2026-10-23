@@ -5468,17 +5468,17 @@ $Oz.Xaml = @'
                                 <TextBlock Text="OZZYHN TWEAKS  //  CONTROL DECK" Style="{StaticResource Kicker}" Margin="2,0,0,8"/>
                                 <Border Style="{StaticResource Card}" Padding="22">
                                     <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
                                         <Viewbox Grid.ColumnSpan="3" Width="176" Height="176" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,190,0" Opacity="0.06" IsHitTestVisible="False">
                                             <Canvas Width="100" Height="100">
                                                 <Path Data="{StaticResource OzHex}" Stroke="{StaticResource NeonGrad}" StrokeThickness="5" StrokeLineJoin="Round"/>
                                                 <Path Data="{StaticResource OzMark}" Fill="{StaticResource NeonGrad}"/>
                                             </Canvas>
                                         </Viewbox>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="Auto"/>
-                                            <ColumnDefinition Width="*"/>
-                                            <ColumnDefinition Width="Auto"/>
-                                        </Grid.ColumnDefinitions>
                                         <Grid Width="170" Height="170">
                                             <Ellipse Width="150" Height="150" Stroke="#14FFFFFF" StrokeThickness="10"/>
                                             <Path x:Name="ScoreGlow" StrokeThickness="22" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Stroke="{StaticResource NeonGrad}" Opacity="0.16"/>
