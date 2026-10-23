@@ -1,9 +1,13 @@
+<p align="center"><img src="assets/ozzyhn-pfp-512.png" width="160" alt="OZZYHN TWEAKS"></p>
+
 # OPTIMIZACIONES DE OZZYHN
+
+**by OZZYHN TWEAKS** · [github.com/ozzyhntweaks](https://github.com/ozzyhntweaks) · **English / Español**
 
 **A hardware-aware Windows 10 / 11 optimizer with a futuristic neon interface.**
 It scans the PC, works out what kind of machine it is, and tunes Windows for *that* machine. That holds whether it is a $150 Celeron laptop that needs reviving or an RTX 4090 rig chasing every frame.
 
-Every switch shows the **real state read from Windows right now**, every change is **logged and reversible**, and the whole thing is one open-source PowerShell file you can read before you run it.
+Every switch shows the **real state read from Windows right now**, every change is **logged and reversible**, and the whole thing is one open-source PowerShell file you can read before you run it. The interface switches between **English and Spanish** with one click (EN | ES in the title bar), and starts in Spanish on Spanish Windows.
 
 ---
 
@@ -19,7 +23,7 @@ Or download **`Run-Ozzyhn.cmd`** and double-click it (it asks for admin rights b
 On older Windows 10 builds, if the download fails, use this longer command:
 
 ```powershell
-[Net.ServicePointManager]::SecurityProtocol='Tls12'; irm https://raw.githubusercontent.com/ozzyhn/optimizaciones-de-ozzyhn/main/ozzyhn.ps1 | iex
+[Net.ServicePointManager]::SecurityProtocol='Tls12'; irm https://raw.githubusercontent.com/ozzyhntweaks/optimizaciones-de-ozzyhn/main/ozzyhn.ps1 | iex
 ```
 
 **Requirements:** Windows 10 (1809+) or Windows 11, x64 or ARM64, administrator account. Nothing to install: it uses the PowerShell built into Windows.
@@ -78,30 +82,32 @@ Undervolting and BIOS settings (XMP / EXPO, fan curves) cannot be changed safely
 
 ---
 
-## Build from source
+## What's new in 1.1
 
-The app is developed in `/src` and compiled into the single file `ozzyhn.ps1`:
+* **Registry tweaks now really apply.** 1.0 had a bug that deleted registry values instead of writing them, so switches showed ON while nothing changed, and some flipped back later. If you used 1.0, open the app and press **RE-APPLY** on the Tweaks page.
+* **Honest counts.** Tweaks with nothing to change on your PC (for example a service that is not installed) show **N/A** and are not counted. Anything Windows blocks or later undoes is flagged with the reason and a one-click re-apply.
+* **Faster.** The scan and every background task run inside the app instead of starting a new PowerShell each time. The restore point is reused if one was made in the last 24 hours.
+* **Smooth scrolling.** The tweak list only draws the rows on screen.
+* **English / Español** switch, the new OZ logo, and the GitHub links point to the right page.
 
-```powershell
-./build.ps1                  # compile + ASCII, XAML and syntax checks
-./build.ps1 -Owner yourname  # if your GitHub username is not "ozzyhn"
-./tests/Run-Tests.ps1        # tier detection, catalog, profiles and helpers
-```
+---
 
-GitHub Actions builds and tests every push on Windows. It loads the XAML with real WPF and runs the tests on PowerShell 5.1 and 7. Pushing a tag such as `v1.0.0` publishes a release.
+## Source
+
+Everything is in one file, `ozzyhn.ps1`. The logo and profile picture are in `/assets` (SVG source + PNG).
 
 ---
 
 ## En español
 
-**Optimizaciones de Ozzyhn** analiza tu PC (CPU, GPU, RAM, disco, placa y batería) y detecta si es de escritorio o portátil, si usa Windows 10 u 11 y si es una PC **barata, económica, de gama media o de gama alta**. Luego la optimiza según ese resultado. Cada interruptor muestra el estado real de Windows y todo se puede deshacer.
+**Optimizaciones de Ozzyhn** (por **OZZYHN TWEAKS**) analiza tu PC (CPU, GPU, RAM, disco, placa y batería) y detecta si es de escritorio o portátil, si usa Windows 10 u 11 y si es una PC **barata, económica, de gama media o de gama alta**. Luego la optimiza según ese resultado. Cada interruptor muestra el estado real de Windows y todo se puede deshacer. La app está **en español y en inglés**: cambia con el botón **EN | ES** de la barra de título.
 
 Ábrelo en **PowerShell como administrador**:
 
 ```powershell
-irm https://raw.githubusercontent.com/ozzyhn/optimizaciones-de-ozzyhn/main/ozzyhn.ps1 | iex
+irm https://raw.githubusercontent.com/ozzyhntweaks/optimizaciones-de-ozzyhn/main/ozzyhn.ps1 | iex
 ```
 
 ---
 
-MIT License. Made by **Ozzyhn**.
+MIT License. Made by **OZZYHN TWEAKS** · [github.com/ozzyhntweaks](https://github.com/ozzyhntweaks)
