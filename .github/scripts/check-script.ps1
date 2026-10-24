@@ -72,7 +72,7 @@ foreach ($f in $findings) {
 Write-Host ('PSScriptAnalyzer: {0} style notes (not blocking)' -f ($findings.Count - @($findings | Where-Object { [string]$_.Severity -in 'Error', 'ParseError' -or $_.RuleName -in $securityRules }).Count))
 
 if ($fail.Count) {
-    $fail | ForEach-Object { Write-Host "FAIL  $_" -ForegroundColor Red }
+    $fail | ForEach-Object { Write-Host "::error::FAIL  $_" }
     exit 1
 }
 Write-Host "All checks passed for $Path" -ForegroundColor Green

@@ -5,6 +5,8 @@
 #>
 param([string]$Path = 'ozzyhn.ps1')
 $ErrorActionPreference = 'Stop'
+# Show failures as annotations on the GitHub run, not only in the log
+trap { Write-Host ('::error::Test script stopped at line {0}: {1}' -f $_.InvocationInfo.ScriptLineNumber, $_.Exception.Message); exit 1 }
 
 # Load only the data-folder functions from the app (the full script would open its window)
 $tokens = $null; $errors = $null
@@ -17,7 +19,7 @@ foreach ($d in $defs) { . ([scriptblock]::Create($d.Extent.Text)) }
 $script:Failures = 0
 function Check([string]$Name, [bool]$Ok) {
     if ($Ok) { Write-Host "PASS  $Name" -ForegroundColor Green }
-    else { Write-Host "FAIL  $Name" -ForegroundColor Red; $script:Failures++ }
+    else { Write-Host "::error::FAIL  $Name"; $script:Failures++ }
 }
 $stamp = Get-Date -Format 'HHmmssfff'
 function New-Case([string]$Name) {
