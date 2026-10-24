@@ -5,7 +5,10 @@
     ===================================================================
      Launch from an Administrator PowerShell:
 
-         irm https://raw.githubusercontent.com/ozzyhntweaks/optimizaciones-de-ozzyhn/main/ozzyhn.ps1 | iex
+         irm https://github.com/ozzyhntweaks/optimizaciones-de-ozzyhn/releases/latest/download/ozzyhn.ps1 | iex
+
+     Only download it from that address. Each release lists SHA-256 hashes
+     and a GitHub build attestation so you can check your copy (see README).
 
      What it does
        - Scans the PC (CPU, GPU, RAM, storage, board, battery, temps)
@@ -23,13 +26,14 @@
 
 #region ============================ STATE ============================
 $Oz = [hashtable]::Synchronized(@{})
-$Oz.Version   = '1.1.0'
+$Oz.Version   = '1.1.1'
 $Oz.AppName   = 'Optimizaciones de Ozzyhn'
 $Oz.Brand     = 'OZZYHN TWEAKS'
 $Oz.RepoOwner = 'ozzyhntweaks'
 $Oz.RepoName  = 'optimizaciones-de-ozzyhn'
-$Oz.Branch    = 'main'
-$Oz.ScriptUrl = 'https://raw.githubusercontent.com/{0}/{1}/{2}/ozzyhn.ps1' -f $Oz.RepoOwner, $Oz.RepoName, $Oz.Branch
+# The exact released file for this version, used when the app relaunches itself as administrator.
+# Releases are built and hashed by GitHub Actions, so a commit to main never reaches users by itself.
+$Oz.ScriptUrl = 'https://github.com/{0}/{1}/releases/download/v{2}/ozzyhn.ps1' -f $Oz.RepoOwner, $Oz.RepoName, $Oz.Version
 $Oz.RepoUrl   = 'https://github.com/{0}/{1}' -f $Oz.RepoOwner, $Oz.RepoName
 $Oz.ProfileUrl = 'https://github.com/{0}' -f $Oz.RepoOwner
 $__ozBase     = if ($env:ProgramData) { $env:ProgramData } else { [IO.Path]::GetTempPath() }
@@ -120,6 +124,97 @@ function Save-OzSettings {
         if (-not (Test-Path -LiteralPath $Oz.DataDir)) { New-Item -ItemType Directory -Path $Oz.DataDir -Force | Out-Null }
         [pscustomobject]@{ Lang = $Oz.Lang; Version = $Oz.Version } | ConvertTo-Json | Set-Content -LiteralPath $Oz.Settings -Encoding UTF8
     } catch { }
+}
+#endregion
+
+#region ============================ DATA FOLDER SECURITY ============================
+# C:\ProgramData lets any account create folders and files. The undo journal tells this app,
+# which runs as administrator, which registry values to write back on revert, so a journal
+# planted by a standard account could make it change any setting on the PC. The data folder is
+# therefore locked so that only SYSTEM and Administrators can write to it (anyone can read).
+
+function Get-OzAdminSids {
+    @('S-1-5-18', 'S-1-5-32-544', [Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
+}
+
+function Test-OzAdminOnly {
+    # True when the file or folder is owned by SYSTEM / Administrators (or the admin running this
+    # app), no other account has the rights in -Mask, and it is not a link pointing elsewhere.
+    # The default mask: write, append, attributes, delete, change permissions or owner, generic write / all.
+    param([string]$Path, [int]$Mask = 0x500D0156, [switch]$SkipInheritOnly)
+    try {
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { return $false }
+        if (-not $item.PSIsContainer -and $item.LinkType) { return $false }
+        $acl = Get-Acl -LiteralPath $Path -ErrorAction Stop
+        $ok = Get-OzAdminSids
+        if ($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $ok) { return $false }
+        foreach ($r in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+            if ($r.AccessControlType -ne 'Allow' -or $r.IdentityReference.Value -in $ok) { continue }
+            if ($SkipInheritOnly -and ($r.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly)) { continue }
+            if ([int]$r.FileSystemRights -band $Mask) { return $false }
+        }
+        return $true
+    } catch { return $false }
+}
+
+function New-OzDataDirAcl {
+    # SYSTEM and Administrators: full control. Users: read. Nothing inherited from ProgramData.
+    $acl = New-Object Security.AccessControl.DirectorySecurity
+    $acl.SetOwner((New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'))
+    $acl.SetAccessRuleProtection($true, $false)
+    $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    foreach ($a in @(@('S-1-5-18', 'FullControl'), @('S-1-5-32-544', 'FullControl'), @('S-1-5-32-545', 'ReadAndExecute'))) {
+        $sid = New-Object Security.Principal.SecurityIdentifier $a[0]
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]$a[1], $inherit, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)))
+    }
+    $acl
+}
+
+function Protect-OzDataDir {
+    # Run once at startup, before anything in the data folder is read. Returns $false when the
+    # folder cannot be made safe, and the app then refuses to start.
+    # A folder that is not locked yet (made by version 1.1.0 or older, or by someone else) is
+    # renamed and kept. The new folder is created already locked. The undo journal and settings
+    # are carried over only if an administrator made the old folder and wrote those files.
+    $dir = $Oz.DataDir
+    if (Test-OzAdminOnly $dir) { return $true }
+    try {
+        $old = $null; $carry = $false
+        if ([IO.Directory]::Exists($dir) -or [IO.File]::Exists($dir)) {
+            # Made by an admin, and no one else can delete, rename or re-permission what is inside
+            $carry = Test-OzAdminOnly $dir 0x500D0040 -SkipInheritOnly
+            $old = '{0}.old-{1}' -f $dir, (Get-Date -Format 'yyyyMMdd-HHmmss')
+            Rename-Item -LiteralPath $dir -NewName (Split-Path -Leaf $old) -ErrorAction Stop
+        }
+        [void][IO.Directory]::CreateDirectory($dir, (New-OzDataDirAcl))
+        if (-not (Test-OzAdminOnly $dir)) { throw 'the new folder is not locked (another program may have created it first).' }
+        if ($old) {
+            $Oz.DataDirOld = $old
+            $Oz.DataDirCarried = $carry
+            if ($carry) {
+                foreach ($name in 'journal.json', 'settings.json') {
+                    $f = Join-Path $old $name
+                    if ([IO.File]::Exists($f) -and (Test-OzAdminOnly $f)) { [IO.File]::WriteAllBytes((Join-Path $dir $name), [IO.File]::ReadAllBytes($f)) }
+                }
+            }
+        }
+        return $true
+    } catch {
+        Write-Host ('The data folder {0} could not be made safe: {1}' -f $dir, $_.Exception.Message) -ForegroundColor Red
+        Write-Host ('No se pudo proteger la carpeta de datos {0}: {1}' -f $dir, $_.Exception.Message) -ForegroundColor Red
+        Write-Host 'Delete or rename that folder, then run the app again. / Borra o renombra esa carpeta y vuelve a abrir la app.' -ForegroundColor Yellow
+        return $false
+    }
+}
+
+function Write-OzDataDirNote {
+    if (-not $Oz.DataDirOld) { return }
+    if ($Oz.DataDirCarried) {
+        Write-OzLog (T 'Data folder locked so only administrators can change it. Your undo journal was kept; older logs are in {0}' $Oz.DataDirOld) 'INFO'
+    } else {
+        Write-OzLog (T 'The old data folder could have been changed by a non-administrator account, so it was set aside without reading it: {0}. The undo journal starts empty. Use the System Restore point to undo older changes.' $Oz.DataDirOld) 'WARN'
+    }
 }
 #endregion
 
@@ -4769,6 +4864,12 @@ La versi&oacute;n 1.0 no escribi&oacute; bien este ajuste. Usa REAPLICAR abajo p
 This update fixes a v1.0 bug: {0} tweak(s) you applied before were never really written. Press RE-APPLY in TWEAKS to apply them properly.
 Esta actualizaci&oacute;n corrige un error de la v1.0: {0} ajuste(s) que aplicaste antes nunca se escribieron de verdad. Presiona REAPLICAR en AJUSTES para aplicarlos bien.
 
+Data folder locked so only administrators can change it. Your undo journal was kept; older logs are in {0}
+Carpeta de datos protegida: solo los administradores pueden cambiarla. Se conserv&oacute; tu registro de deshacer; los registros anteriores est&aacute;n en {0}
+
+The old data folder could have been changed by a non-administrator account, so it was set aside without reading it: {0}. The undo journal starts empty. Use the System Restore point to undo older changes.
+Una cuenta sin permisos de administrador pudo haber cambiado la carpeta de datos anterior, as&iacute; que se apart&oacute; sin leerla: {0}. El registro de deshacer empieza vac&iacute;o. Usa el punto de restauraci&oacute;n del sistema para deshacer cambios anteriores.
+
 '@
 #endregion
 
@@ -5339,7 +5440,7 @@ $Oz.Xaml = @'
                             <Run Text="OPTIMIZACIONES" Foreground="#E6F1FF"/><Run Text=" DE " Foreground="#5D6E92"/><Run Text="OZZYHN" Foreground="#00E5FF"/>
                         </TextBlock>
                         <Border Margin="12,0,0,0" CornerRadius="9" Padding="8,2" BorderBrush="#558A5CFF" BorderThickness="1" VerticalAlignment="Center">
-                            <TextBlock x:Name="VersionText" Text="v1.1.0" FontSize="10.5" Foreground="#B79BFF" FontFamily="{StaticResource Mono}"/>
+                            <TextBlock x:Name="VersionText" Text="v1.1.1" FontSize="10.5" Foreground="#B79BFF" FontFamily="{StaticResource Mono}"/>
                         </Border>
                         <TextBlock Text="//  OZZYHN TWEAKS" Margin="12,0,0,0" VerticalAlignment="Center" FontFamily="{StaticResource Display}" FontSize="11.5" FontWeight="Bold" Foreground="{StaticResource NeonGrad}"/>
                     </StackPanel>
@@ -7242,6 +7343,12 @@ function Start-Ozzyhn {
         return
     }
 
+    # Nothing in the data folder is read or written until it is locked to administrators
+    if (-not (Protect-OzDataDir)) {
+        [void](Read-Host 'Press Enter to close / Presiona Enter para cerrar')
+        return
+    }
+
     Initialize-OzSpanish $Oz.SpanishPairs
     $settings = Read-OzSettings
     $Oz.Lang = if ($settings.Lang -in 'en', 'es') { [string]$settings.Lang } else { Get-OzDefaultLanguage }
@@ -7271,6 +7378,7 @@ function Start-Ozzyhn {
         Register-OzXamlTexts
         Set-OzLanguage $Oz.Lang
         Write-OzLog ('{0} v{1} ({2}) started. Data folder: {3}' -f $Oz.AppName, $Oz.Version, $Oz.Brand, $Oz.DataDir) 'STEP'
+        Write-OzDataDirNote
         Initialize-OzEvents
         $Oz.Timer.Start()
         [void]$Oz.Window.ShowDialog()

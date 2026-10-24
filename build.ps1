@@ -1,6 +1,8 @@
 <#
     Compiles /src into the single file ozzyhn.ps1 that users launch with:
-        irm https://raw.githubusercontent.com/ozzyhn/optimizaciones-de-ozzyhn/main/ozzyhn.ps1 | iex
+        irm https://github.com/ozzyhntweaks/optimizaciones-de-ozzyhn/releases/latest/download/ozzyhn.ps1 | iex
+    Users get it from a GitHub release: push a tag like v1.1.1 (matching $Oz.Version) and
+    .github/workflows/release.yml checks it, hashes it and publishes it.
     Checks: ASCII-only, XAML well-formed, PowerShell syntax.
 #>
 param(

@@ -16,17 +16,37 @@ Every switch shows the **real state read from Windows right now**, every change 
 Open **PowerShell as Administrator** and paste:
 
 ```powershell
-irm https://raw.githubusercontent.com/ozzyhntweaks/optimizaciones-de-ozzyhn/main/ozzyhn.ps1 | iex
+irm https://github.com/ozzyhntweaks/optimizaciones-de-ozzyhn/releases/latest/download/ozzyhn.ps1 | iex
 ```
 
-Or download **`Run-Ozzyhn.cmd`** and double-click it (it asks for admin rights by itself).
+This always runs the latest **release**, which GitHub Actions checks, hashes and publishes. Changes on the `main` branch never reach you until they are released.
+
+> **Only use this address** (or the [Releases page](https://github.com/ozzyhntweaks/optimizaciones-de-ozzyhn/releases)). Copies posted anywhere else (other sites, video descriptions, Discord, forks) are not mine and may contain malware.
+
+Or download **`Run-Ozzyhn.cmd`** from the [latest release](https://github.com/ozzyhntweaks/optimizaciones-de-ozzyhn/releases/latest) and double-click it (it asks for admin rights by itself).
 On older Windows 10 builds, if the download fails, use this longer command:
 
 ```powershell
-[Net.ServicePointManager]::SecurityProtocol='Tls12'; irm https://raw.githubusercontent.com/ozzyhntweaks/optimizaciones-de-ozzyhn/main/ozzyhn.ps1 | iex
+[Net.ServicePointManager]::SecurityProtocol='Tls12'; irm https://github.com/ozzyhntweaks/optimizaciones-de-ozzyhn/releases/latest/download/ozzyhn.ps1 | iex
 ```
 
 **Requirements:** Windows 10 (1809+) or Windows 11, x64 or ARM64, administrator account. Nothing to install: it uses the PowerShell built into Windows.
+
+### Check your copy (optional)
+
+Every release includes `SHA256SUMS.txt` and a GitHub build attestation, which proves the file was built from this repository by GitHub Actions and not changed afterwards. Download `ozzyhn.ps1` from the [latest release](https://github.com/ozzyhntweaks/optimizaciones-de-ozzyhn/releases/latest), then run:
+
+```powershell
+Get-FileHash .\ozzyhn.ps1 -Algorithm SHA256
+```
+
+The hash must match the line for `ozzyhn.ps1` in `SHA256SUMS.txt` (upper or lower case does not matter). If you have the [GitHub CLI](https://cli.github.com), you can also check the attestation:
+
+```powershell
+gh attestation verify .\ozzyhn.ps1 --repo ozzyhntweaks/optimizaciones-de-ozzyhn
+```
+
+Then start the file you checked from PowerShell as Administrator: `powershell -ExecutionPolicy Bypass -File .\ozzyhn.ps1`
 
 ---
 
@@ -65,6 +85,8 @@ Undervolting and BIOS settings (XMP / EXPO, fan curves) cannot be changed safely
 * **Danger Zone** settings (Defender real-time, SmartScreen, Memory Integrity, VBS, CPU mitigations) are **never part of any profile** and always ask for confirmation.
 * Hardware-specific tweaks hide themselves where they do not apply: laptop-only, desktop-only, Windows 11-only, NVIDIA/AMD-only and VMs.
 * No telemetry, no ads, no downloads of other tools. Logs stay in `C:\ProgramData\Ozzyhn\logs`.
+* The data folder `C:\ProgramData\Ozzyhn` is **locked so only administrators can change it**. Otherwise another program without admin rights could plant an undo journal and get the app to apply it with admin rights.
+* Every change to the code is checked automatically for downloads, `Invoke-Expression`, antivirus exclusions and PSScriptAnalyzer security rules before it can be released. See [SECURITY.md](SECURITY.md) to report a problem privately.
 
 > Use at your own risk. This tool changes system settings. Read what a switch does before you flip it.
 
@@ -82,6 +104,11 @@ Undervolting and BIOS settings (XMP / EXPO, fan curves) cannot be changed safely
 
 ---
 
+## What's new in 1.1.1
+
+* **Security fix.** Older versions kept the undo journal in a folder that any account on the PC could add files to. A program without admin rights could plant a journal there, and *Revert* would then apply it with admin rights. The data folder is now locked to administrators. The first time 1.1.1 starts, it moves the old folder aside (`C:\ProgramData\Ozzyhn.old-...`) and carries your undo journal over if an administrator wrote it.
+* **Launch from Releases.** The launch command now downloads the latest release instead of the `main` branch. Releases are checked, hashed and attested by GitHub Actions.
+
 ## What's new in 1.1
 
 * **Registry tweaks now really apply.** 1.0 had a bug that deleted registry values instead of writing them, so switches showed ON while nothing changed, and some flipped back later. If you used 1.0, open the app and press **RE-APPLY** on the Tweaks page.
@@ -94,7 +121,7 @@ Undervolting and BIOS settings (XMP / EXPO, fan curves) cannot be changed safely
 
 ## Source
 
-Everything is in one file, `ozzyhn.ps1`. The logo and profile picture are in `/assets` (SVG source + PNG).
+Everything is in one file, `ozzyhn.ps1`. The logo and profile picture are in `/assets` (SVG source + PNG). Releases are built by [`.github/workflows/release.yml`](.github/workflows/release.yml) when a version tag is pushed.
 
 ---
 
@@ -105,8 +132,10 @@ Everything is in one file, `ozzyhn.ps1`. The logo and profile picture are in `/a
 Ábrelo en **PowerShell como administrador**:
 
 ```powershell
-irm https://raw.githubusercontent.com/ozzyhntweaks/optimizaciones-de-ozzyhn/main/ozzyhn.ps1 | iex
+irm https://github.com/ozzyhntweaks/optimizaciones-de-ozzyhn/releases/latest/download/ozzyhn.ps1 | iex
 ```
+
+Descárgalo **solo** desde esta dirección o desde la página de [Releases](https://github.com/ozzyhntweaks/optimizaciones-de-ozzyhn/releases). Las copias publicadas en otros sitios no son mías y pueden tener malware. Cada versión incluye `SHA256SUMS.txt` para comprobar tu copia con `Get-FileHash`.
 
 ---
 

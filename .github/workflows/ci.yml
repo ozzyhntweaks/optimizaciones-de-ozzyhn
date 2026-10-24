@@ -1,0 +1,28 @@
+# Checks every push and pull request, and every release before it is published.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check ozzyhn.ps1
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Static checks (ASCII, syntax, XAML, no downloads, PSScriptAnalyzer)
+        shell: powershell
+        run: .\.github\scripts\check-script.ps1 -Path ozzyhn.ps1
+
+      - name: Data folder stays locked to administrators
+        shell: powershell
+        run: .\.github\scripts\test-datadir.ps1 -Path ozzyhn.ps1
