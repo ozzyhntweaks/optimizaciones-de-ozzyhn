@@ -1,25 +1,66 @@
-# Publishes a release when a version tag is pushed, for example:
-#   git tag v1.1.2 && git push origin v1.1.2
-# The tag must match $Oz.Version in ozzyhn.ps1. The same checks as CI run first. The release
-# gets the files users download, SHA256SUMS.txt, and a GitHub build attestation for each file.
+# Publishes a release whenever $Oz.Version in ozzyhn.ps1 changes on main (or when a tag like
+# v1.1.2 is pushed, which must match $Oz.Version). To release: bump $Oz.Version, push to main.
+# The same checks as CI run first. The release gets the files users download, SHA256SUMS.txt,
+# and a GitHub build attestation for each file.
 name: Release
 
 on:
   push:
+    branches: [main]
+    paths: [ozzyhn.ps1, Run-Ozzyhn.cmd, .github/workflows/release.yml]
     tags: ['v*']
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  version:
+    name: Is this a new version?
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      publish: ${{ steps.v.outputs.publish }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - id: v
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version=$(sed -n "s/^\$Oz\.Version *= *'\([0-9.]*\)'.*/\1/p" ozzyhn.ps1 | head -n 1)
+          tag="v$version"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ -z "$version" ]; then echo "::error::\$Oz.Version not found in ozzyhn.ps1"; exit 1; fi
+          if [ "$GITHUB_REF_TYPE" = "tag" ] && [ "$GITHUB_REF_NAME" != "$tag" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match \$Oz.Version = '$version' in ozzyhn.ps1"
+            exit 1
+          fi
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "Release $tag already exists, nothing to publish."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "New version $tag will be released."
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
   check:
+    needs: version
+    if: needs.version.outputs.publish == 'true'
     uses: ./.github/workflows/ci.yml
 
   release:
-    needs: check
+    needs: [version, check]
+    if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:
-      contents: write      # create the release
+      contents: write      # create the release and its tag
       id-token: write      # sign the build attestation
       attestations: write  # store the build attestation
     steps:
@@ -27,18 +68,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Tag matches the version in ozzyhn.ps1
-        run: |
-          version=$(sed -n "s/^\$Oz\.Version *= *'\([0-9.]*\)'.*/\1/p" ozzyhn.ps1 | head -n 1)
-          echo "Script version: $version, tag: $GITHUB_REF_NAME"
-          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
-            echo "::error::Tag $GITHUB_REF_NAME does not match \$Oz.Version = '$version' in ozzyhn.ps1"
-            exit 1
-          fi
-
       - name: Hash the release files
-        run: |
-          sha256sum ozzyhn.ps1 Run-Ozzyhn.cmd | tee SHA256SUMS.txt
+        run: sha256sum ozzyhn.ps1 Run-Ozzyhn.cmd | tee SHA256SUMS.txt
 
       - name: Attest where the files were built
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -50,6 +81,7 @@ jobs:
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
         run: |
           {
             echo "Launch from PowerShell as Administrator:"
@@ -66,7 +98,7 @@ jobs:
             echo
             echo "Check a downloaded copy with \`Get-FileHash .\\ozzyhn.ps1\` or \`gh attestation verify .\\ozzyhn.ps1 --repo ${GITHUB_REPOSITORY}\`."
           } > notes.md
-          gh release create "$GITHUB_REF_NAME" ozzyhn.ps1 Run-Ozzyhn.cmd SHA256SUMS.txt \
-            --title "Optimizaciones de Ozzyhn $GITHUB_REF_NAME" \
-            --notes-file notes.md \
-            --verify-tag
+          gh release create "$TAG" ozzyhn.ps1 Run-Ozzyhn.cmd SHA256SUMS.txt \
+            --target "$GITHUB_SHA" \
+            --title "Optimizaciones de Ozzyhn $TAG" \
+            --notes-file notes.md

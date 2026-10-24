@@ -12,7 +12,7 @@ Copies on other websites, in video descriptions, on Discord or in forks are not 
 
 ## Check a download
 
-Each release is built by GitHub Actions from a version tag ([release.yml](.github/workflows/release.yml)) and includes:
+Each release is published by GitHub Actions when the version number changes ([release.yml](.github/workflows/release.yml)), only after the checks below pass, and includes:
 
 * `SHA256SUMS.txt`: compare it with `Get-FileHash .\ozzyhn.ps1 -Algorithm SHA256`.
 * A GitHub build attestation: `gh attestation verify .\ozzyhn.ps1 --repo ozzyhntweaks/optimizaciones-de-ozzyhn` confirms the file was built from this repository and not changed afterwards.

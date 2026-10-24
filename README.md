@@ -121,7 +121,7 @@ Undervolting and BIOS settings (XMP / EXPO, fan curves) cannot be changed safely
 
 ## Source
 
-Everything is in one file, `ozzyhn.ps1`. The logo and profile picture are in `/assets` (SVG source + PNG). Releases are built by [`.github/workflows/release.yml`](.github/workflows/release.yml) when a version tag is pushed.
+Everything is in one file, `ozzyhn.ps1`. The logo and profile picture are in `/assets` (SVG source + PNG). Releases are published by [`.github/workflows/release.yml`](.github/workflows/release.yml) when the version number in `ozzyhn.ps1` changes.
 
 ---
 
