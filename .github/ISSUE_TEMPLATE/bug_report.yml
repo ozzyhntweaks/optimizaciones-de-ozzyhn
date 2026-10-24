@@ -1,0 +1,47 @@
+name: Bug report / Reportar un error
+description: Something does not work as expected. / Algo no funciona como debería.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security problem? Do not post it here. Use **Security > Report a vulnerability** instead.
+        ¿Problema de seguridad? No lo publiques aquí. Usa **Security > Report a vulnerability**.
+  - type: input
+    id: version
+    attributes:
+      label: App version / Versión de la app
+      description: Shown in the title bar, for example v1.1.2. / Aparece en la barra de título.
+      placeholder: v1.1.2
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version / Versión de Windows
+      description: Press Win+R, type winver, press Enter. / Presiona Win+R, escribe winver y Enter.
+      placeholder: Windows 11 24H2 (26100.2033)
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened? / ¿Qué pasó?
+      description: Which tab, switch or button, what you expected and what happened instead. / Qué pestaña o botón, qué esperabas y qué pasó.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log / Registro
+      description: |
+        Open the **Log** tab, press **COPY LOG** and paste it here. Old logs are in C:\ProgramData\Ozzyhn\logs.
+        Abre la pestaña del registro, presiona **COPIAR REGISTRO** y pégalo aquí. Los registros anteriores están en C:\ProgramData\Ozzyhn\logs.
+      render: text
+  - type: checkboxes
+    id: source
+    attributes:
+      label: Download / Descarga
+      options:
+        - label: I got the app from this repository's Releases page or the README command. / Descargué la app desde Releases o con el comando del README.
+          required: true

@@ -45,6 +45,9 @@ jobs:
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
             echo "Release $tag already exists, nothing to publish."
             echo "publish=false" >> "$GITHUB_OUTPUT"
+          elif ! grep -qx "## $version" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## $version' section. Add one with the release notes, then push again."
+            exit 1
           else
             echo "New version $tag will be released."
             echo "publish=true" >> "$GITHUB_OUTPUT"
@@ -83,7 +86,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
         run: |
+          version="${TAG#v}"
           {
+            # This version's section of CHANGELOG.md
+            awk -v h="## $version" '$0 == h { on = 1; next } on && /^## / { exit } on' CHANGELOG.md
+            echo
+            echo "---"
+            echo
             echo "Launch from PowerShell as Administrator:"
             echo
             echo '```powershell'

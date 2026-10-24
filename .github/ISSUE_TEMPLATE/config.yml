@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem privately / Reportar un problema de seguridad
+    url: https://github.com/ozzyhntweaks/optimizaciones-de-ozzyhn/security/advisories/new
+    about: Use this instead of a public issue. / Usa esto en vez de un issue público.

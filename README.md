@@ -104,24 +104,15 @@ Undervolting and BIOS settings (XMP / EXPO, fan curves) cannot be changed safely
 
 ---
 
-## What's new in 1.1.1
+## What's new
 
-* **Security fix.** Older versions kept the undo journal in a folder that any account on the PC could add files to. A program without admin rights could plant a journal there, and *Revert* would then apply it with admin rights. The data folder is now locked to administrators. The first time 1.1.1 starts, it moves the old folder aside (`C:\ProgramData\Ozzyhn.old-...`) and carries your undo journal over if an administrator wrote it.
-* **Launch from Releases.** The launch command now downloads the latest release instead of the `main` branch. Releases are checked, hashed and attested by GitHub Actions.
-
-## What's new in 1.1
-
-* **Registry tweaks now really apply.** 1.0 had a bug that deleted registry values instead of writing them, so switches showed ON while nothing changed, and some flipped back later. If you used 1.0, open the app and press **RE-APPLY** on the Tweaks page.
-* **Honest counts.** Tweaks with nothing to change on your PC (for example a service that is not installed) show **N/A** and are not counted. Anything Windows blocks or later undoes is flagged with the reason and a one-click re-apply.
-* **Faster.** The scan and every background task run inside the app instead of starting a new PowerShell each time. The restore point is reused if one was made in the last 24 hours.
-* **Smooth scrolling.** The tweak list only draws the rows on screen.
-* **English / Español** switch, the new OZ logo, and the GitHub links point to the right page.
+**1.1.2:** the double-click launcher always runs the newest release, and every tweak is tested on real Windows (apply, check, revert, check) before each release. **1.1.1:** security fix for the data folder, and launching from Releases. Full history in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
 ## Source
 
-Everything is in one file, `ozzyhn.ps1`. The logo and profile picture are in `/assets` (SVG source + PNG). Releases are published by [`.github/workflows/release.yml`](.github/workflows/release.yml) when the version number in `ozzyhn.ps1` changes.
+Everything is in one file, `ozzyhn.ps1`. The logo and profile picture are in `/assets` (SVG source + PNG). Releases are published by [`.github/workflows/release.yml`](.github/workflows/release.yml) when the version number in `ozzyhn.ps1` changes, using that version's section of [CHANGELOG.md](CHANGELOG.md) as release notes.
 
 ---
 

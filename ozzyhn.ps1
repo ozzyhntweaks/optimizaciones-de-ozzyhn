@@ -26,7 +26,7 @@
 
 #region ============================ STATE ============================
 $Oz = [hashtable]::Synchronized(@{})
-$Oz.Version   = '1.1.1'
+$Oz.Version   = '1.1.2'
 $Oz.AppName   = 'Optimizaciones de Ozzyhn'
 $Oz.Brand     = 'OZZYHN TWEAKS'
 $Oz.RepoOwner = 'ozzyhntweaks'
@@ -618,9 +618,11 @@ function Get-OzTweakState {
     try {
         if ($T.Detect) { if (Invoke-OzBlock $T.Detect) { return 'On' } else { return 'Off' } }
         $checked = 0
+        $protReg = @(Get-OzData $T.Id 'ProtectedReg' | Where-Object { $_ })
         foreach ($r in $T.Reg) {
             if ($r.OnlyIfExists -and -not (Test-Path -LiteralPath $r.P)) { continue }
             if ($r.Soft) { continue }   # applied, but Windows keeps re-writing it: not used to decide ON/OFF
+            if ($protReg -contains "$($r.P)|$($r.N)") { continue }   # Windows does not allow changing it
             $checked++
             $cur = Get-OzReg $r.P $r.N
             if ($r.Remove) { if ($cur.Exists) { return 'Off' } else { continue } }
@@ -647,12 +649,33 @@ function Test-OzTweak {
     (Get-OzTweakState $T) -eq 'On'
 }
 
+function Test-OzAccessDenied {
+    # True when the error is Windows refusing access (a value or key protected by TrustedInstaller)
+    param($ErrorRecord)
+    $ex = $ErrorRecord.Exception
+    while ($ex) {
+        if ($ex -is [System.Security.SecurityException] -or $ex -is [System.UnauthorizedAccessException]) { return $true }
+        $ex = $ex.InnerException
+    }
+    $false
+}
+
 function Invoke-OzTweakApply {
     param($T)
     foreach ($r in $T.Reg) {
         if ($r.OnlyIfExists -and -not (Test-Path -LiteralPath $r.P)) { continue }
         Save-OzOriginalReg $T.Id $r.P $r.N
-        if ($r.Remove) { Remove-OzReg $r.P $r.N } else { Set-OzReg $r.P $r.N $r.V $r.T }
+        try {
+            if ($r.Remove) { Remove-OzReg $r.P $r.N } else { Set-OzReg $r.P $r.N $r.V $r.T }
+        } catch {
+            if (-not (Test-OzAccessDenied $_)) { throw }
+            # Windows protects a few values (some service keys). Remember them so they do not keep
+            # the switch OFF, and skip them on revert: they were never changed.
+            $k = "$($r.P)|$($r.N)"
+            $prot = @(Get-OzData $T.Id 'ProtectedReg' | Where-Object { $_ })
+            if ($prot -notcontains $k) { Set-OzData $T.Id 'ProtectedReg' (@($prot) + $k) }
+            Write-OzLog ((T '  setting is protected by Windows, skipped: {0}') -f $k) 'WARN'
+        }
     }
     foreach ($task in $T.Tasks) {
         $st = Get-OzTaskState $task
@@ -696,13 +719,22 @@ function Invoke-OzTweakRevert {
     param($T)
     $e = Get-OzJournalEntry $T.Id
     $done = @{}
+    $protReg = @(Get-OzData $T.Id 'ProtectedReg' | Where-Object { $_ })
+    foreach ($k in $protReg) { $done[$k] = $true }   # never changed, so nothing to restore
     foreach ($r in $T.Reg) {
         if ($r.OnlyIfExists -and -not (Test-Path -LiteralPath $r.P)) { continue }
         $k = "$($r.P)|$($r.N)"
+        if ($done.ContainsKey($k)) { continue }
         $done[$k] = $true
-        if ($e -and $e.Reg.ContainsKey($k)) { Restore-OzOriginal $r.P $r.N $e.Reg[$k] $r.T }
-        elseif ($null -eq $r.D) { Remove-OzReg $r.P $r.N }
-        else { Set-OzReg $r.P $r.N $r.D $r.T }
+        # One value Windows refuses must not stop the others from being restored
+        try {
+            if ($e -and $e.Reg.ContainsKey($k)) { Restore-OzOriginal $r.P $r.N $e.Reg[$k] $r.T }
+            elseif ($null -eq $r.D) { Remove-OzReg $r.P $r.N }
+            else { Set-OzReg $r.P $r.N $r.D $r.T }
+        } catch {
+            if (-not (Test-OzAccessDenied $_)) { throw }
+            Write-OzLog ((T '  could not restore {0}') -f $k) 'WARN'
+        }
     }
     if ($e) {
         # values written dynamically by custom tweaks (Set-OzTracked)
@@ -2658,6 +2690,9 @@ Consola abierta: {0}
 
   task is protected by Windows, skipped: {0}
   Windows protege esta tarea, se omiti&oacute;: {0}
+
+  setting is protected by Windows, skipped: {0}
+  Windows protege este ajuste, se omiti&oacute;: {0}
 
   could not restore {0}
   no se pudo restaurar {0}
@@ -5440,7 +5475,7 @@ $Oz.Xaml = @'
                             <Run Text="OPTIMIZACIONES" Foreground="#E6F1FF"/><Run Text=" DE " Foreground="#5D6E92"/><Run Text="OZZYHN" Foreground="#00E5FF"/>
                         </TextBlock>
                         <Border Margin="12,0,0,0" CornerRadius="9" Padding="8,2" BorderBrush="#558A5CFF" BorderThickness="1" VerticalAlignment="Center">
-                            <TextBlock x:Name="VersionText" Text="v1.1.1" FontSize="10.5" Foreground="#B79BFF" FontFamily="{StaticResource Mono}"/>
+                            <TextBlock x:Name="VersionText" Text="v1.1.2" FontSize="10.5" Foreground="#B79BFF" FontFamily="{StaticResource Mono}"/>
                         </Border>
                         <TextBlock Text="//  OZZYHN TWEAKS" Margin="12,0,0,0" VerticalAlignment="Center" FontFamily="{StaticResource Display}" FontSize="11.5" FontWeight="Bold" Foreground="{StaticResource NeonGrad}"/>
                     </StackPanel>
