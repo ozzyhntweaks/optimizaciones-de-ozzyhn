@@ -26,3 +26,12 @@ jobs:
       - name: Data folder stays locked to administrators
         shell: powershell
         run: .\.github\scripts\test-datadir.ps1 -Path ozzyhn.ps1
+
+      - name: Every tweak applies and reverts cleanly
+        shell: powershell
+        run: .\.github\scripts\test-tweaks.ps1 -Path ozzyhn.ps1
+
+      - name: Launcher runs the latest release, or the local copy offline
+        if: github.event_name != 'pull_request'
+        shell: powershell
+        run: .\.github\scripts\test-launcher.ps1 -Cmd Run-Ozzyhn.cmd
