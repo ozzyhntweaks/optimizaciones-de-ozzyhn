@@ -5780,7 +5780,7 @@ $Oz.Xaml = @'
                                         <StackPanel Grid.Column="1" Margin="26,6,10,0" VerticalAlignment="Center">
                                             <TextBlock Text="SYSTEM CLASS" Style="{StaticResource Label}"/>
                                             <TextBlock x:Name="TierText" Text="SCANNING HARDWARE..." FontFamily="{StaticResource Display}" FontSize="34" FontWeight="Bold" Foreground="#00E5FF" Margin="0,2,0,0" TextWrapping="Wrap"/>
-                                            <TextBlock x:Name="TierSub" Text="" FontFamily="{StaticResource Display}" FontSize="14" Foreground="#E6F1FF" Margin="0,4,0,0"/>
+                                            <TextBlock x:Name="TierSub" Text="" FontFamily="{StaticResource Display}" FontSize="14" Foreground="#E6F1FF" Margin="0,4,0,0" TextWrapping="Wrap"/>
                                             <TextBlock x:Name="TierSummary" Text="" Style="{StaticResource Body}" Margin="0,8,0,0" MaxWidth="560" HorizontalAlignment="Left"/>
                                             <UniformGrid Columns="4" Margin="0,14,0,0" MaxWidth="560" HorizontalAlignment="Left">
                                                 <StackPanel Margin="0,0,14,0"><TextBlock Text="CPU" Style="{StaticResource Label}"/><ProgressBar x:Name="BarCpu" Style="{StaticResource Meter}" Margin="0,5,0,0"/></StackPanel>
@@ -5889,7 +5889,7 @@ $Oz.Xaml = @'
                                     <StackPanel VerticalAlignment="Center">
                                         <TextBlock x:Name="PendingText" Text="No pending changes" FontFamily="{StaticResource Display}" FontSize="15" FontWeight="SemiBold"/>
                                         <CheckBox x:Name="ChkRestorePoint" Style="{StaticResource Tick}" IsChecked="True" Margin="0,6,0,0">
-                                            <TextBlock Text="Create a System Restore point before applying" Foreground="#8A9BBF" FontSize="12"/>
+                                            <TextBlock Text="Create a System Restore point before applying" Foreground="#8A9BBF" FontSize="12" TextWrapping="Wrap"/>
                                         </CheckBox>
                                     </StackPanel>
                                     <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
@@ -7518,7 +7518,7 @@ function Get-OzGameCatalog {
                 @{ Name = 'Display mode'; Entries = @('setting.fullscreen'); Want = '1'; WantText = 'Full Screen'; Labels = @{ '1' = 'Full Screen'; '0' = 'Windowed / Borderless' } },
                 @{ Name = 'V-Sync'; Entries = @('setting.mat_vsync_mode', 'setting.mat_vsync_mod'); Want = '0'; WantText = 'Disabled'; Labels = @{ '0' = 'Disabled'; '1' = 'Double Buffered'; '2' = 'Triple Buffered'; '3' = 'Adaptive'; '4' = 'Adaptive (1/2 Rate)' } },
                 @{ Name = 'Adaptive resolution'; Entries = @('setting.dvs_enable'); Want = '0'; WantText = 'Off'; Labels = @{ '0' = 'Off'; '1' = 'On' } },
-                @{ Name = 'Ambient occlusion'; Entries = @('setting.ssao_enabled', 'setting.ssao_quality'); Want = '0'; WantText = 'Disabled'; Labels = @{ '0' = 'Disabled' } },
+                @{ Name = 'Ambient occlusion'; Entries = @('setting.ssao_enabled', 'setting.ssao_quality'); Want = '0'; WantText = 'Disabled'; Labels = @{ '0' = 'Disabled'; '1' = 'On'; '2' = 'On'; '3' = 'On'; '4' = 'On' } },
                 @{ Name = 'Volumetric lighting'; Entries = @('setting.volumetric_lighting'); Want = '0'; WantText = 'Disabled'; Labels = @{ '0' = 'Disabled'; '1' = 'Enabled' } }
             )
             MenuPath = 'Settings > Video'; Menu = $apexMenu

@@ -60,7 +60,16 @@ function Save-Shot([string]$Name, $Visual = $win) {
     $h = [int][math]::Ceiling($Visual.ActualHeight)
     if ($w -lt 1 -or $h -lt 1) { return }
     $rtb = New-Object System.Windows.Media.Imaging.RenderTargetBitmap($w, $h, 96, 96, [System.Windows.Media.PixelFormats]::Pbgra32)
-    $rtb.Render($Visual)
+    if ($Visual -is [System.Windows.Window]) { $rtb.Render($Visual) }
+    else {
+        # A part of the window, drawn in full even where it is scrolled out of view
+        $dv = New-Object System.Windows.Media.DrawingVisual
+        $dc = $dv.RenderOpen()
+        $dc.DrawRectangle((Get-OzBrush '#05070D'), $null, (New-Object System.Windows.Rect(0, 0, $w, $h)))
+        $dc.DrawRectangle((New-Object System.Windows.Media.VisualBrush($Visual)), $null, (New-Object System.Windows.Rect(0, 0, $w, $h)))
+        $dc.Close()
+        $rtb.Render($dv)
+    }
     $enc = New-Object System.Windows.Media.Imaging.PngBitmapEncoder
     $enc.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($rtb))
     $fs = [IO.File]::Create((Join-Path $Shots "$Name.png"))
@@ -161,6 +170,22 @@ Wait-Ui 200
 Show-OzGames (@($fake) + @(Get-OzGameScan | Where-Object { $_.Game.Id -ne 'apex' }))
 Wait-Ui 400
 Save-Shot 'games-test-game'
+foreach ($lang in 'en', 'es') {
+    if ($lang -eq 'es') {
+        Set-OzLanguage 'es'
+        Show-OzGames (@($fake) + @(Get-OzGameScan | Where-Object { $_.Game.Id -ne 'apex' }))
+        Wait-Ui 300
+    }
+    $i = 0
+    foreach ($card in @($Oz.UI.GamesPanel.Children)) {
+        $i++
+        $card.Child.Children[1].Visibility = 'Visible'   # open the details
+        Wait-Ui 150
+        Save-Shot ('card-{0}-{1}' -f $lang, $i) $card
+    }
+}
+Set-OzLanguage 'en'
+Show-OzGames (@($fake) + @(Get-OzGameScan | Where-Object { $_.Game.Id -ne 'apex' }))
 Set-Size 1093 574
 Save-Shot 'laptop-games-test-game'
 if ($Oz.UI.GamesPanel.Children.Count -eq 6) { Pass 'Games page shows all 6 games' } else { Fail "Games page shows $($Oz.UI.GamesPanel.Children.Count) cards" }
