@@ -1,0 +1,177 @@
+<#
+    Opens the real app window on Windows (GitHub's Windows runner) and uses it like a person would:
+      - waits for the hardware scan and tweak detection
+      - opens every page, at normal size and at the size of a cheap 1366x768 laptop at 125% scaling
+      - switches to Spanish and back, presses Ctrl+F, opens the dialogs and the results card
+      - shows the Games page with a test game whose settings file is known
+    Fails on any error the app logs, any unhandled UI exception, or a menu that does not fit.
+    With -Shots, saves a PNG of every step to that folder.
+#>
+param([string]$Path = 'ozzyhn.ps1', [string]$Shots = '')
+$ErrorActionPreference = 'Stop'
+trap { Write-Host ('::error::UI test stopped at line {0}: {1}' -f $_.InvocationInfo.ScriptLineNumber, $_.Exception.Message); exit 1 }
+
+$text = [IO.File]::ReadAllText((Resolve-Path -LiteralPath $Path).Path)
+$cut = $text.LastIndexOf('# ---- launch ----')
+if ($cut -lt 0) { throw 'The "# ---- launch ----" marker was not found in the script' }
+. ([scriptblock]::Create($text.Substring(0, $cut)))
+
+$base = if ($env:RUNNER_TEMP) { $env:RUNNER_TEMP } else { [IO.Path]::GetTempPath() }
+$work = Join-Path $base ('oz-ui-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+New-Item -ItemType Directory -Path $work | Out-Null
+$Oz.DataDir = $work
+$Oz.Journal = Join-Path $work 'journal.json'
+$Oz.Settings = Join-Path $work 'settings.json'
+$Oz.LogDir = Join-Path $work 'logs'
+$Oz.LogFile = Join-Path $Oz.LogDir 'ui-test.log'
+$Oz.JournalData = $null
+if ($Shots) { New-Item -ItemType Directory -Path $Shots -Force | Out-Null }
+
+$script:Problems = New-Object System.Collections.Generic.List[string]
+function Fail([string]$Msg) { $script:Problems.Add($Msg); Write-Host "::error::$Msg" }
+function Pass([string]$Msg) { Write-Host "PASS  $Msg" -ForegroundColor Green }
+
+Initialize-OzSpanish $Oz.SpanishPairs
+$Oz.Lang = 'en'
+Initialize-OzWindow
+$win = $Oz.Window
+$win.Dispatcher.Add_UnhandledException({
+        $script:Problems.Add('Unhandled UI exception: ' + $_.Exception.Message)
+        Write-Host ('::error::Unhandled UI exception: ' + $_.Exception.ToString())
+        $_.Handled = $true
+    })
+
+function Wait-Ui([int]$Ms = 250) {
+    $end = [DateTime]::Now.AddMilliseconds($Ms)
+    do {
+        $win.Dispatcher.Invoke([Action] {}, [System.Windows.Threading.DispatcherPriority]::Background)
+        Start-Sleep -Milliseconds 15
+    } while ([DateTime]::Now -lt $end)
+}
+function Wait-Idle([int]$Seconds = 120) {
+    $end = [DateTime]::Now.AddSeconds($Seconds)
+    do { Wait-Ui 200 } while ($Oz.Busy -and [DateTime]::Now -lt $end)
+    if ($Oz.Busy) { Fail "Still busy after $Seconds s" }
+}
+function Save-Shot([string]$Name, $Visual = $win) {
+    if (-not $Shots) { return }
+    $Visual.UpdateLayout()
+    $w = [int][math]::Ceiling($Visual.ActualWidth)
+    $h = [int][math]::Ceiling($Visual.ActualHeight)
+    if ($w -lt 1 -or $h -lt 1) { return }
+    $rtb = New-Object System.Windows.Media.Imaging.RenderTargetBitmap($w, $h, 96, 96, [System.Windows.Media.PixelFormats]::Pbgra32)
+    $rtb.Render($Visual)
+    $enc = New-Object System.Windows.Media.Imaging.PngBitmapEncoder
+    $enc.Frames.Add([System.Windows.Media.Imaging.BitmapFrame]::Create($rtb))
+    $fs = [IO.File]::Create((Join-Path $Shots "$Name.png"))
+    try { $enc.Save($fs) } finally { $fs.Dispose() }
+}
+function Set-Size([int]$W, [int]$H) {
+    $win.WindowState = 'Normal'
+    $win.MinWidth = [math]::Min($win.MinWidth, $W)
+    $win.MinHeight = [math]::Min($win.MinHeight, $H)
+    $win.Width = $W
+    $win.Height = $H
+    Wait-Ui 400
+}
+
+# ---------- open the window and let the startup scan finish ----------
+$win.Show()
+Wait-Ui 500
+Wait-Idle 180
+if ($Oz.Sys) { Pass "hardware scan finished: $($Oz.Sys.Score.TierName), $($Oz.Rows.Count) tweak rows" } else { Fail 'The hardware scan did not finish' }
+
+$pages = 'Dash', 'Tweaks', 'Profiles', 'Games', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log'
+foreach ($size in @(@('normal', 1320, 840), @('laptop', 1093, 574))) {
+    Set-Size $size[1] $size[2]
+    foreach ($p in $pages) {
+        $Oz.UI["Nav$p"].IsChecked = $true
+        Wait-Ui 300
+        Wait-Idle 120
+        if ($Oz.UI["Page$p"].Visibility -ne 'Visible') { Fail "$p page did not open" }
+        Save-Shot ('{0}-{1}' -f $size[0], $p.ToLower())
+    }
+    # Every menu button must be on screen without scrolling
+    $statusTop = $win.ActualHeight - 30
+    foreach ($p in $pages) {
+        $nav = $Oz.UI["Nav$p"]
+        $y = $nav.TranslatePoint((New-Object System.Windows.Point(0, 0)), $win).Y
+        if ($y + $nav.ActualHeight -gt $statusTop + 0.5) { Fail ('{0}: menu button {1} is cut off (bottom {2:N0}, space ends at {3:N0})' -f $size[0], $p, ($y + $nav.ActualHeight), $statusTop) }
+    }
+    Pass "$($size[0]) size ($($size[1])x$($size[2])): every page opened"
+}
+if ($Oz.UI.NavProfileCard.Visibility -ne 'Collapsed') { Fail 'laptop size: the profile card in the menu should be hidden' }
+Set-Size 1320 840
+if ($Oz.UI.NavProfileCard.Visibility -ne 'Visible') { Fail 'normal size: the profile card in the menu should be shown' }
+
+# ---------- Ctrl+F ----------
+$Oz.UI.NavDash.IsChecked = $true
+Wait-Ui 200
+Invoke-OzSearchShortcut
+Wait-Ui 300
+if ($Oz.UI.PageTweaks.Visibility -eq 'Visible') { Pass 'Ctrl+F opens the tweak search' } else { Fail 'Ctrl+F did not open TWEAKS' }
+
+# ---------- Spanish ----------
+Set-OzLanguage 'es'
+Wait-Ui 300
+foreach ($p in 'Dash', 'Tweaks', 'Games', 'Backup') {
+    $Oz.UI["Nav$p"].IsChecked = $true
+    Wait-Ui 300
+    Wait-Idle 60
+    Save-Shot ('es-{0}' -f $p.ToLower())
+}
+if ($Oz.UI.NavGames.Content -ne 'Juegos') { Fail "Spanish: the Games button says '$($Oz.UI.NavGames.Content)'" } else { Pass 'Spanish switch' }
+Set-OzLanguage 'en'
+Wait-Ui 300
+
+# ---------- dialogs (closed automatically; a picture of each is saved) ----------
+$script:DialogSeen = New-Object System.Collections.Generic.List[string]
+$closer = New-Object System.Windows.Threading.DispatcherTimer
+$closer.Interval = [TimeSpan]::FromMilliseconds(400)
+$closer.Add_Tick({
+        $d = $Oz.Dialog
+        if ($d -and $d.IsLoaded) {
+            $n = $script:DialogSeen.Count + 1
+            Save-Shot ("dialog-$n") $d
+            $script:DialogSeen.Add([string]$d.Title)
+            $d.Tag = 'No'
+            $d.Close()
+        }
+    })
+$closer.Start()
+$r = Show-OzDialog -Text 'Test question with a long line of text so the wrapping can be seen in the picture.' -Buttons YesNoCancel -Kind Question -Labels @('APPLY NOW', 'SHOW ME FIRST', 'CANCEL')
+if ($r -ne 'No') { Fail "Dialog returned '$r' instead of 'No'" }
+Show-OzResults -Total 12 -Ok 11 -Fail 1 -Blocked @('Example tweak') -Reboot $true -ActiveBefore 10
+$closer.Stop()
+if ($script:DialogSeen.Count -eq 2) { Pass 'themed dialog and results card' } else { Fail "Expected 2 dialogs, saw $($script:DialogSeen.Count)" }
+
+# ---------- Games page with a test game ----------
+$cfg = Join-Path $work 'videoconfig.txt'
+[IO.File]::WriteAllText($cfg, "`"VideoConfig`"`r`n{`r`n`t`"setting.fullscreen`"`t`t`"1`"`r`n`t`"setting.mat_vsync_mode`"`t`t`"1`"`r`n`t`"setting.dvs_enable`"`t`t`"0`"`r`n`t`"setting.ssao_enabled`"`t`t`"1`"`r`n}`r`n")
+$apex = Get-OzGameCatalog | Where-Object Id -EQ 'apex'
+$map = Read-OzGameConfig $cfg 'Vdf'
+$fake = [pscustomobject]@{
+    Game = $apex; Installed = $true; Launcher = 'Steam'; Location = $work
+    IconPath = (Join-Path $env:SystemRoot 'explorer.exe'); ConfigPath = $cfg; ConfigFound = $true
+    Review = @($apex.Checks | ForEach-Object { Test-OzGameCheck $_ $map })
+}
+if (-not (Get-OzFileIcon $fake.IconPath)) { Fail 'Could not read the icon of explorer.exe' }
+$Oz.UI.NavGames.IsChecked = $true
+Wait-Ui 200
+Show-OzGames (@($fake) + @(Get-OzGameScan | Where-Object { $_.Game.Id -ne 'apex' }))
+Wait-Ui 400
+Save-Shot 'games-test-game'
+Set-Size 1093 574
+Save-Shot 'laptop-games-test-game'
+if ($Oz.UI.GamesPanel.Children.Count -eq 6) { Pass 'Games page shows all 6 games' } else { Fail "Games page shows $($Oz.UI.GamesPanel.Children.Count) cards" }
+
+# ---------- close ----------
+$win.Close()
+Wait-Ui 300
+
+$errLines = @(Get-Content -LiteralPath $Oz.LogFile -ErrorAction SilentlyContinue | Where-Object { $_ -match '\[ERR ?\]' })
+foreach ($l in $errLines) { Fail "App logged an error: $l" }
+Write-Host '--- app log (warnings) ---'
+Get-Content -LiteralPath $Oz.LogFile -ErrorAction SilentlyContinue | Where-Object { $_ -match '\[WARN\]' } | Select-Object -First 40 | ForEach-Object { Write-Host $_ }
+if ($script:Problems.Count) { Write-Host "$($script:Problems.Count) problem(s)"; exit 1 }
+Write-Host 'UI test passed' -ForegroundColor Green

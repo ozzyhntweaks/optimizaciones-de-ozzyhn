@@ -1,0 +1,46 @@
+# Opens the app on Windows, takes a screenshot of every page (normal size, small laptop size,
+# Spanish, dialogs) and publishes them on the ui-preview branch, so the layout can be checked
+# without running the app. Nothing here is part of a release.
+name: UI preview
+
+on:
+  push:
+    branches: [main]
+    paths: [ozzyhn.ps1, .github/scripts/test-ui.ps1, .github/workflows/ui-preview.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-preview
+  cancel-in-progress: true
+
+jobs:
+  screenshots:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # push the screenshots to the ui-preview branch
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Open the app and take screenshots
+        shell: powershell
+        run: .\.github\scripts\test-ui.ps1 -Path ozzyhn.ps1 -Shots "$env:RUNNER_TEMP\shots"
+
+      - name: Publish them on the ui-preview branch
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$RUNNER_TEMP/shots" || exit 0
+          printf 'Screenshots of the app for commit %s, taken by .github/workflows/ui-preview.yml\n' "$GITHUB_SHA" > README.md
+          git init -q -b ui-preview
+          git config user.name "ozzyhn"
+          git config user.email "ovega051@gmail.com"
+          git add -A
+          git commit -q -m "UI screenshots for ${GITHUB_SHA::7}"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ui-preview

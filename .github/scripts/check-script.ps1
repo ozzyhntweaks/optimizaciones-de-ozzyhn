@@ -54,7 +54,54 @@ foreach ($m in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Lan
     }
 }
 
-# 4. PSScriptAnalyzer
+# 4. Every English text shown in the app has a Spanish line (the EN | ES switch)
+$pairsAst = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and $n.Left.Extent.Text -eq '$Oz.SpanishPairs' }, $true)) | Select-Object -First 1
+if (-not $pairsAst) { $fail.Add('No $Oz.SpanishPairs block found') }
+else {
+    $es = @{}
+    $pairsText = $pairsAst.Right.Find({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true).Value
+    $block = New-Object System.Collections.Generic.List[string]
+    foreach ($raw in (($pairsText -replace "`r", '') -split "`n") + @('')) {
+        $line = $raw.TrimEnd()
+        if ($line) { $block.Add($line); continue }
+        if ($block.Count -ge 2) { $es[$block[0].Replace('\n', "`n")] = $true }
+        elseif ($block.Count -eq 1) { $fail.Add("Spanish block has an English line without a Spanish line: $($block[0])") }
+        $block.Clear()
+    }
+    $needs = New-Object System.Collections.Generic.List[object]
+    foreach ($c in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+        $name = [string]$c.GetCommandName()
+        if ($name -cne 'T' -and $name -ne 'Invoke-OzSafe') { continue }
+        if ($c.CommandElements.Count -lt 2) { continue }
+        $arg = $c.CommandElements[1]
+        if ($arg -is [System.Management.Automation.Language.StringConstantExpressionAst]) { $needs.Add(@($arg.Value, $arg.Extent.StartLineNumber)) }
+        elseif ($arg -is [System.Management.Automation.Language.ExpandableStringExpressionAst] -and -not $arg.NestedExpressions.Count) { $needs.Add(@($arg.Value, $arg.Extent.StartLineNumber)) }
+    }
+    # Fixed texts in the window that are swapped by Register-OzXamlTexts / Set-OzLanguage
+    $keep = @('@ozzyhntweaks', 'github.com/ozzyhntweaks', 'EN', 'ES', 'English', ('Espa' + [char]0xF1 + 'ol'), 'CPU', 'GPU', 'RAM', 'DNS', 'OZ SCORE', 'OZZYHN TWEAKS', 'OZZYHN TWEAKS  //', '//  OZZYHN TWEAKS')
+    $xns = 'http://schemas.microsoft.com/winfx/2006/xaml'
+    foreach ($x in $xaml) {
+        $doc = [xml]($x.Right.Find({ param($n) $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true).Value)
+        foreach ($node in $doc.SelectNodes('//*')) {
+            $dyn = $false
+            for ($p = $node; $p -is [System.Xml.XmlElement]; $p = $p.ParentNode) { if ($p.GetAttribute('Tag') -eq 'dyn') { $dyn = $true; break } }
+            if ($dyn) { continue }
+            $texts = @()
+            if ($node.LocalName -eq 'TextBlock' -and -not $node.GetAttribute('Name', $xns) -and -not $node.SelectNodes('*').Count) { $texts += $node.GetAttribute('Text') }
+            if ($node.LocalName -in 'Button', 'CheckBox', 'RadioButton', 'ToggleButton', 'Label') { $texts += $node.GetAttribute('Content') }
+            $texts += $node.GetAttribute('ToolTip')
+            foreach ($t in $texts) { if ($t -and -not $t.StartsWith('{')) { $needs.Add(@($t, 0)) } }
+        }
+    }
+    foreach ($n in $needs) {
+        $t = [string]$n[0]
+        if ($t -notmatch '[A-Za-z]{2}' -or $keep -contains $t -or $es.ContainsKey($t)) { continue }
+        $where = if ($n[1]) { "line $($n[1])" } else { 'XAML' }
+        $fail.Add(("No Spanish line for '{0}' ({1}). Add it to the SPANISH block." -f $t, $where))
+    }
+}
+
+# 5. PSScriptAnalyzer
 if (-not (Get-Module -ListAvailable -Name PSScriptAnalyzer)) {
     Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force | Out-Null
     Install-Module -Name PSScriptAnalyzer -Scope CurrentUser -Force

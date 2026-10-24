@@ -2659,7 +2659,7 @@ function Invoke-OzRevertAll {
     $j = Read-OzJournal
     $ids = @($j.Keys)
     if (-not $ids.Count) { Write-OzLog (T 'Nothing to revert - the undo journal is empty.') 'INFO'; return }
-    $ok = [System.Windows.MessageBox]::Show((T "Revert all {0} change(s) made by {1}?`n`nRemoved apps are not reinstalled (get them from the Microsoft Store)." $ids.Count $Oz.AppName), $Oz.AppName, 'YesNo', 'Warning')
+    $ok = Show-OzDialog -Text (T "Revert all {0} change(s) made by {1}?`n`nRemoved apps are not reinstalled (get them from the Microsoft Store)." $ids.Count $Oz.AppName) -Buttons YesNo -Kind Warning
     if ($ok -ne 'Yes') { return }
     $tweaks = @()
     foreach ($id in $ids) {
@@ -4905,6 +4905,156 @@ Carpeta de datos protegida: solo los administradores pueden cambiarla. Se conser
 The old data folder could have been changed by a non-administrator account, so it was set aside without reading it: {0}. The undo journal starts empty. Use the System Restore point to undo older changes.
 Una cuenta sin permisos de administrador pudo haber cambiado la carpeta de datos anterior, as&iacute; que se apart&oacute; sin leerla: {0}. El registro de deshacer empieza vac&iacute;o. Usa el punto de restauraci&oacute;n del sistema para deshacer cambios anteriores.
 
+Games
+Juegos
+
+GAMES
+JUEGOS
+
+Competitive settings for popular shooters, matched to this PC. The app reads each game's own settings file to show what to change, and gives the launch options for the launcher you use. It never changes your game files.
+Ajustes competitivos para shooters populares, adaptados a esta PC. La app lee el archivo de ajustes de cada juego para mostrarte qu&eacute; cambiar, y te da las opciones de lanzamiento del launcher que usas. Nunca cambia los archivos de tus juegos.
+
+RESCAN GAMES
+VOLVER A BUSCAR JUEGOS
+
+Game scan
+Revisi&oacute;n de juegos
+
+The game check starts after the hardware scan.
+La revisi&oacute;n de juegos empieza despu&eacute;s del an&aacute;lisis del hardware.
+
+{0} of {1} games found on this PC. Setting and launcher names are shown as they appear in English menus.
+Se encontraron {0} de {1} juegos en esta PC. Los nombres de ajustes y de launchers se muestran como en los men&uacute;s en ingl&eacute;s.
+
+None of these games were found on this PC. The recommended settings still apply if you install one.
+No se encontr&oacute; ninguno de estos juegos en esta PC. Los ajustes recomendados sirven si instalas alguno.
+
+Games checked: {0} found on this PC.
+Juegos revisados: {0} encontrados en esta PC.
+
+Installed with {0}
+Instalado con {0}
+
+Not found on this PC
+No encontrado en esta PC
+
+{0} / {1} SETTINGS OK
+{0} / {1} AJUSTES BIEN
+
+HIDE
+OCULTAR
+
+DETAILS
+DETALLES
+
+YOUR SETTINGS FILE
+TU ARCHIVO DE AJUSTES
+
+Settings file not found. Start the game once, close it, then press RESCAN GAMES.
+No se encontr&oacute; el archivo de ajustes. Abre el juego una vez, ci&eacute;rralo y presiona VOLVER A BUSCAR JUEGOS.
+
+not in this version of the file
+no est&aacute; en esta versi&oacute;n del archivo
+
+{0}  ->  set to {1}
+{0}  ->  pon {1}
+
+OPEN SETTINGS FOLDER
+ABRIR CARPETA DE AJUSTES
+
+SET IN THE GAME MENU
+AJUSTAR EN EL MEN&Uacute; DEL JUEGO
+
+LAUNCH OPTIONS
+OPCIONES DE LANZAMIENTO
+
+COPY
+COPIAR
+
+Copied: {0}
+Copiado: {0}
+
+Could not copy. Select the text and press Ctrl+C.
+No se pudo copiar. Selecciona el texto y presiona Ctrl+C.
+
+Highest FPS
+M&aacute;ximos FPS
+
+Capped to your {0} Hz screen (cooler, steadier)
+Limitado a tu pantalla de {0} Hz (m&aacute;s fresco y estable)
+
+-dev skips the intro videos. +fps_max 0 removes the frame cap; the capped version runs cooler and steadier, which suits laptops.
+-dev omite los videos de inicio. +fps_max 0 quita el l&iacute;mite de FPS; la versi&oacute;n con l&iacute;mite va m&aacute;s fresca y estable, ideal para port&aacute;tiles.
+
+Force Performance mode
+Forzar el modo Performance
+
+Only needed if Rendering Mode keeps switching back from Performance. Epic documents this option to force it.
+Solo hace falta si Rendering Mode deja de estar en Performance. Epic documenta esta opci&oacute;n para forzarlo.
+
+Not needed. CS2 ignores most old CS:GO launch options (-tickrate, -high, -threads). Set everything in the game menu.
+No hace falta. CS2 ignora casi todas las opciones de lanzamiento del viejo CS:GO (-tickrate, -high, -threads). Ajusta todo en el men&uacute; del juego.
+
+Not available. The Riot Client has no launch options; everything is set in the game menu.
+No disponible. Riot Client no tiene opciones de lanzamiento; todo se ajusta en el men&uacute; del juego.
+
+Not needed. Overwatch 2 has no launch options that raise FPS.
+No hace falta. Overwatch 2 no tiene opciones de lanzamiento que suban los FPS.
+
+Not needed. Siege X has no launch options that raise FPS.
+No hace falta. Siege X no tiene opciones de lanzamiento que suban los FPS.
+
+YES
+S&Iacute;
+
+NO
+NO
+
+CANCEL
+CANCELAR
+
+OK
+ACEPTAR
+
+APPLY NOW
+APLICAR AHORA
+
+SHOW ME FIRST
+VER LA LISTA
+
+AUTO-TUNE found {0} improvement(s) for this {1} ({2}).\n\nApply them now (a restore point is made first), or look at the list first?
+AUTO-AJUSTE encontr&oacute; {0} mejora(s) para esta {1} ({2}).\n\n&iquest;Aplicarlas ahora (antes se crea un punto de restauraci&oacute;n) o ver la lista primero?
+
+DONE
+LISTO
+
+Changes finished.
+Cambios terminados.
+
+{0} change(s) done
+{0} cambio(s) hecho(s)
+
+{0} failed - see the Log tab
+{0} fallaron: mira la pesta&ntilde;a Registro
+
+Windows kept these OFF: {0}
+Windows dej&oacute; estos desactivados: {0}
+
+Tweaks active: {0} -> {1}
+Ajustes activos: {0} -> {1}
+
+Undo any of it in BACKUP & UNDO.
+Puedes deshacer todo en RESPALDO Y DESHACER.
+
+Some changes take effect after a restart.
+Algunos cambios se aplican despu&eacute;s de reiniciar.
+
+RESTART NOW
+REINICIAR AHORA
+
+LATER
+M&Aacute;S TARDE
+
 '@
 #endregion
 
@@ -4912,7 +5062,7 @@ Una cuenta sin permisos de administrador pudo haber cambiado la carpeta de datos
 $Oz.Xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Optimizaciones de Ozzyhn | OZZYHN TWEAKS" Width="1320" Height="840" MinWidth="1080" MinHeight="660"
+        Title="Optimizaciones de Ozzyhn | OZZYHN TWEAKS" Width="1320" Height="840" MinWidth="960" MinHeight="540"
         WindowStartupLocation="CenterScreen" Background="#05070D" Foreground="#E6F1FF"
         FontFamily="Segoe UI" FontSize="13" UseLayoutRounding="True" SnapsToDevicePixels="True"
         TextOptions.TextFormattingMode="Display">
@@ -5545,19 +5695,22 @@ $Oz.Xaml = @'
                                 <RowDefinition Height="*"/>
                                 <RowDefinition Height="Auto"/>
                             </Grid.RowDefinitions>
-                            <StackPanel>
-                                <TextBlock Text="CONTROL DECK" Style="{StaticResource Label}" Margin="14,0,0,8"/>
-                                <RadioButton x:Name="NavDash" Style="{StaticResource Nav}" Tag="&#xE9D9;" Content="Dashboard" IsChecked="True"/>
-                                <RadioButton x:Name="NavTweaks" Style="{StaticResource Nav}" Tag="&#xE945;" Content="Tweaks"/>
-                                <RadioButton x:Name="NavProfiles" Style="{StaticResource Nav}" Tag="&#xE734;" Content="Profiles"/>
-                                <RadioButton x:Name="NavDebloat" Style="{StaticResource Nav}" Tag="&#xE74D;" Content="Debloat"/>
-                                <RadioButton x:Name="NavDrivers" Style="{StaticResource Nav}" Tag="&#xE896;" Content="Drivers"/>
-                                <RadioButton x:Name="NavTools" Style="{StaticResource Nav}" Tag="&#xE90F;" Content="Tools"/>
-                                <RadioButton x:Name="NavBackup" Style="{StaticResource Nav}" Tag="&#xE777;" Content="Backup &amp; Undo"/>
-                                <RadioButton x:Name="NavLog" Style="{StaticResource Nav}" Tag="&#xE8A5;" Content="Log"/>
-                            </StackPanel>
+                            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Focusable="False">
+                                <StackPanel>
+                                    <TextBlock Text="CONTROL DECK" Style="{StaticResource Label}" Margin="14,0,0,8"/>
+                                    <RadioButton x:Name="NavDash" Style="{StaticResource Nav}" Tag="&#xE9D9;" Content="Dashboard" IsChecked="True"/>
+                                    <RadioButton x:Name="NavTweaks" Style="{StaticResource Nav}" Tag="&#xE945;" Content="Tweaks"/>
+                                    <RadioButton x:Name="NavProfiles" Style="{StaticResource Nav}" Tag="&#xE734;" Content="Profiles"/>
+                                    <RadioButton x:Name="NavGames" Style="{StaticResource Nav}" Tag="&#xE7FC;" Content="Games"/>
+                                    <RadioButton x:Name="NavDebloat" Style="{StaticResource Nav}" Tag="&#xE74D;" Content="Debloat"/>
+                                    <RadioButton x:Name="NavDrivers" Style="{StaticResource Nav}" Tag="&#xE896;" Content="Drivers"/>
+                                    <RadioButton x:Name="NavTools" Style="{StaticResource Nav}" Tag="&#xE90F;" Content="Tools"/>
+                                    <RadioButton x:Name="NavBackup" Style="{StaticResource Nav}" Tag="&#xE777;" Content="Backup &amp; Undo"/>
+                                    <RadioButton x:Name="NavLog" Style="{StaticResource Nav}" Tag="&#xE8A5;" Content="Log"/>
+                                </StackPanel>
+                            </ScrollViewer>
                             <StackPanel Grid.Row="1">
-                                <Border CornerRadius="10" Padding="12,10" Background="#0C1222" BorderBrush="#2A00E5FF" BorderThickness="1" Margin="0,0,0,10">
+                                <Border x:Name="NavProfileCard" CornerRadius="10" Padding="12,10" Background="#0C1222" BorderBrush="#2A00E5FF" BorderThickness="1" Margin="0,10,0,10">
                                     <Grid>
                                         <Grid.ColumnDefinitions>
                                             <ColumnDefinition Width="Auto"/>
@@ -5577,7 +5730,7 @@ $Oz.Xaml = @'
                                         </StackPanel>
                                     </Grid>
                                 </Border>
-                                <Border CornerRadius="10" Padding="14,12" Background="#0C1222" BorderBrush="#1B2A48" BorderThickness="1" Margin="0,0,0,10">
+                                <Border x:Name="NavActiveCard" CornerRadius="10" Padding="14,12" Background="#0C1222" BorderBrush="#1B2A48" BorderThickness="1" Margin="0,0,0,10">
                                     <StackPanel>
                                         <TextBlock Text="TWEAKS ACTIVE" Style="{StaticResource Label}"/>
                                         <StackPanel Orientation="Horizontal" Margin="0,4,0,6">
@@ -5705,7 +5858,7 @@ $Oz.Xaml = @'
                                 <Grid Grid.Column="1" VerticalAlignment="Center">
                                     <TextBox x:Name="TweakSearch" Style="{StaticResource Input}"/>
                                     <TextBlock Text="&#xE721;" FontFamily="{StaticResource Icons}" Foreground="#5D6E92" Margin="12,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
-                                    <TextBlock x:Name="TweakSearchHint" Text="Search tweaks..." Foreground="#5D6E92" Margin="35,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                                    <TextBlock x:Name="TweakSearchHint" Text="Search tweaks... (Ctrl+F)" Foreground="#5D6E92" Margin="35,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
                                 </Grid>
                             </Grid>
                             <WrapPanel x:Name="ChipPanel" Grid.Row="1" Margin="0,0,12,6"/>
@@ -5761,6 +5914,20 @@ $Oz.Xaml = @'
                                     <TextBlock Text="PROFILES" Style="{StaticResource H1}"/>
                                 <TextBlock Style="{StaticResource Body}" Margin="0,4,0,16" Text="One click, tuned to what was detected on this PC. PREVIEW stages the switches so you can review them first; APPLY does it now. Danger Zone items are never included."/>
                                 <UniformGrid x:Name="ProfilePanel" Columns="2"/>
+                            </StackPanel>
+                        </ScrollViewer>
+
+                        <!-- ===================== GAMES ===================== -->
+                        <ScrollViewer x:Name="PageGames" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" Padding="24,20,12,8">
+                            <StackPanel>
+                                <TextBlock Text="OZZYHN TWEAKS  //" Style="{StaticResource Kicker}"/>
+                                <TextBlock Text="GAMES" Style="{StaticResource H1}"/>
+                                <TextBlock Style="{StaticResource Body}" Margin="0,4,0,12" Text="Competitive settings for popular shooters, matched to this PC. The app reads each game's own settings file to show what to change, and gives the launch options for the launcher you use. It never changes your game files."/>
+                                <WrapPanel Margin="0,0,0,6">
+                                    <Button x:Name="BtnScanGames" Style="{StaticResource Neon}" Content="RESCAN GAMES" Margin="0,0,8,8"/>
+                                </WrapPanel>
+                                <TextBlock x:Name="GamesHint" Text="" Style="{StaticResource Body}" Margin="0,0,0,12"/>
+                                <StackPanel x:Name="GamesPanel" Margin="0,0,12,12"/>
                             </StackPanel>
                         </ScrollViewer>
 
@@ -6110,7 +6277,7 @@ function New-OzColumns {
 
 function Show-OzPage {
     param([string]$Name)
-    foreach ($p in 'Dash', 'Tweaks', 'Profiles', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log') {
+    foreach ($p in 'Dash', 'Tweaks', 'Profiles', 'Games', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log') {
         $el = $Oz.UI["Page$p"]
         if ($el) { $el.Visibility = $(if ($p -eq $Name) { 'Visible' } else { 'Collapsed' }) }
     }
@@ -6126,6 +6293,10 @@ function Show-OzPage {
         Invoke-OzSafe 'App scan' { Show-OzBloat (Get-OzInstalledBloat) }
     }
     if ($Name -eq 'Backup') { Update-OzJournalView }
+    if ($Name -eq 'Games' -and -not $Oz.GamesShown -and $Oz.Sys -and -not $Oz.Busy) {
+        $Oz.GamesShown = $true
+        Invoke-OzSafe 'Game scan' { Show-OzGames (Get-OzGameScan) }
+    }
 }
 
 function Remove-OzAccents {
@@ -6169,6 +6340,116 @@ function Set-OzWindowIcon {
 }
 #endregion
 
+#region ============================ DIALOGS ============================
+function Show-OzDialog {
+    # Neon replacement for MessageBox, in the app's own style. Returns 'Yes', 'No', 'Cancel' or 'OK',
+    # like MessageBox did. Enter picks the first button; Esc or closing picks the last one.
+    #   -Labels: button texts in order (Yes, No, Cancel / OK). Missing ones use YES, NO, CANCEL, OK.
+    #   -Rows:   extra lines under the text, each @{ Text = ''; Color = '#hex'; Glyph = [char]0x... }
+    param(
+        [string]$Text,
+        [ValidateSet('OK', 'YesNo', 'YesNoCancel')][string]$Buttons = 'OK',
+        [ValidateSet('Info', 'Question', 'Warning', 'Error', 'Success')][string]$Kind = 'Info',
+        [string]$Title = '',
+        [string[]]$Labels = @(),
+        [object[]]$Rows = @()
+    )
+    $results = switch ($Buttons) { 'OK' { @('OK') } 'YesNo' { @('Yes', 'No') } default { @('Yes', 'No', 'Cancel') } }
+    $last = $results[$results.Count - 1]
+    if (-not $Oz.Window -or -not $Oz.Window.IsLoaded) {
+        # Before the main window is up there is nothing to style a dialog with
+        $img = switch ($Kind) { 'Warning' { 'Warning' } 'Error' { 'Error' } 'Question' { 'Question' } default { 'Information' } }
+        try { return [string][System.Windows.MessageBox]::Show($Text, $Oz.AppName, $Buttons, $img) } catch { return $last }
+    }
+    $accent = switch ($Kind) { 'Question' { '#8A5CFF' } 'Warning' { '#FFB020' } 'Error' { '#FF3B5C' } 'Success' { '#2BFF9A' } default { '#00E5FF' } }
+    $glyph = switch ($Kind) { 'Question' { [char]0xE9CE } 'Warning' { [char]0xE7BA } 'Error' { [char]0xEA39 } 'Success' { [char]0xE73E } default { [char]0xE946 } }
+    if (-not $Title) { $Title = $Oz.AppName }
+
+    $dlg = New-Object System.Windows.Window
+    $dlg.WindowStyle = 'None'
+    $dlg.ResizeMode = 'NoResize'
+    $dlg.SizeToContent = 'WidthAndHeight'
+    $dlg.ShowInTaskbar = $false
+    $dlg.Owner = $Oz.Window
+    $dlg.WindowStartupLocation = 'CenterOwner'
+    $dlg.Title = $Oz.AppName
+    $dlg.Background = Get-OzBrush '#05070D'
+    $dlg.Foreground = Get-OzBrush '#E6F1FF'
+    $dlg.FontFamily = New-Object System.Windows.Media.FontFamily('Segoe UI')
+    $dlg.FontSize = 13
+    $dlg.UseLayoutRounding = $true
+    $dlg.Tag = $last
+    $dlg.Add_MouseLeftButtonDown({ try { $this.DragMove() } catch { } })
+
+    $outer = New-Object System.Windows.Controls.Border
+    $outer.BorderBrush = Get-OzBrush ('#99' + $accent.TrimStart('#'))
+    $outer.BorderThickness = New-OzThickness '1'
+    $grid = New-OzColumns @('Auto', '*')
+    $bar = New-Object System.Windows.Controls.Border
+    $bar.Width = 4
+    $bar.Background = Get-OzBrush $accent
+    Add-OzGridChild $grid $bar 0
+    $sp = New-Object System.Windows.Controls.StackPanel
+    $sp.Margin = New-OzThickness '22,18,24,18'
+    $sp.MinWidth = 360
+    $sp.MaxWidth = 540
+    $head = New-Object System.Windows.Controls.StackPanel
+    $head.Orientation = 'Horizontal'
+    $gi = New-OzText -Text ([string]$glyph) -Size 18 -Color $accent -Icon -Margin '0,0,10,0'
+    $gi.VerticalAlignment = 'Center'
+    [void]$head.Children.Add($gi)
+    $ti = New-OzText -Text $Title -Size 15 -Color '#E6F1FF' -Display -Bold
+    $ti.VerticalAlignment = 'Center'
+    [void]$head.Children.Add($ti)
+    [void]$sp.Children.Add($head)
+    if ($Text) { [void]$sp.Children.Add((New-OzText -Text $Text -Size 13 -Color '#C9D6EE' -Wrap -Margin '0,12,0,0')) }
+    foreach ($r in @($Rows)) {
+        if (-not $r) { continue }
+        $line = New-OzColumns @('Auto', '*')
+        $line.Margin = New-OzThickness '0,8,0,0'
+        $color = if ($r.Color) { [string]$r.Color } else { '#8A9BBF' }
+        if ($r.Glyph) { Add-OzGridChild $line (New-OzText -Text ([string]$r.Glyph) -Size 13 -Color $color -Icon -Margin '0,2,10,0') 0 }
+        Add-OzGridChild $line (New-OzText -Text ([string]$r.Text) -Size 13 -Color $color -Wrap) 1
+        [void]$sp.Children.Add($line)
+    }
+    $btns = New-Object System.Windows.Controls.StackPanel
+    $btns.Orientation = 'Horizontal'
+    $btns.HorizontalAlignment = 'Right'
+    $btns.Margin = New-OzThickness '0,20,0,0'
+    $defaults = @{ Yes = (T 'YES'); No = (T 'NO'); Cancel = (T 'CANCEL'); OK = (T 'OK') }
+    for ($i = 0; $i -lt $results.Count; $i++) {
+        $res = $results[$i]
+        $label = if ($Labels.Count -gt $i -and $Labels[$i]) { $Labels[$i] } else { $defaults[$res] }
+        $style = if ($i -eq 0) { 'Primary' } else { 'Neon' }
+        $b = New-OzButton -Text $label -Style $style -Tag $res -Margin '8,0,0,0'
+        if ($i -eq 0) { $b.IsDefault = $true }
+        if ($i -eq $results.Count - 1) { $b.IsCancel = $true }
+        $b.Add_Click({
+                $w = [System.Windows.Window]::GetWindow($this)
+                $w.Tag = [string]$this.Tag
+                $w.Close()
+            })
+        [void]$btns.Children.Add($b)
+    }
+    [void]$sp.Children.Add($btns)
+    Add-OzGridChild $grid $sp 1
+    $outer.Child = $grid
+    $dlg.Content = $outer
+    $Oz.Dialog = $dlg
+    try { [void]$dlg.ShowDialog() } finally { $Oz.Dialog = $null }
+    [string]$dlg.Tag
+}
+
+function Invoke-OzSearchShortcut {
+    # Ctrl+F from any page: open TWEAKS and put the cursor in the search box
+    $Oz.UI.NavTweaks.IsChecked = $true
+    [void]$Oz.Window.Dispatcher.BeginInvoke([Action] {
+            [void]$Oz.UI.TweakSearch.Focus()
+            $Oz.UI.TweakSearch.SelectAll()
+        }, [System.Windows.Threading.DispatcherPriority]::Input)
+}
+#endregion
+
 #region ============================ LANGUAGE (UI) ============================
 function Register-OzXamlTexts {
     # Remembers every fixed English text in the window so it can be swapped to Spanish and back.
@@ -6200,7 +6481,7 @@ function Set-OzLanguage {
     $Oz.Lang = $Lang
     foreach ($x in @($Oz.XamlTexts)) { try { $x.El.($x.Prop) = T $x.En } catch { } }
     $ui = $Oz.UI
-    $ui.TweakSearchHint.Text = T 'Search tweaks...'
+    $ui.TweakSearchHint.Text = (T 'Search tweaks...') + '  (Ctrl+F)'
     $ui.AdminText.Text = T 'ADMIN MODE'
     if (-not $Oz.Sys) {
         $ui.TierText.Text = T 'SCANNING HARDWARE...'
@@ -6219,6 +6500,7 @@ function Set-OzLanguage {
     if ($Oz.BloatShown -and $null -ne $Oz.LastBloat) { Show-OzBloat $Oz.LastBloat }
     if ($Oz.DriversShown) { Show-OzDriverRecs; if ($Oz.LastDriverScan) { Show-OzDriverScan $Oz.LastDriverScan -Quiet } }
     if ($Oz.ToolsShown) { Initialize-OzTools }
+    if ($Oz.GamesShown) { Show-OzGames (Get-OzGameScan) } else { $ui.GamesHint.Text = T 'The game check starts after the hardware scan.' }
     Update-OzCleanText
     Update-OzJournalView
     if ($Save) { Save-OzSettings; Write-OzLog (T 'Language: English') 'OK' }
@@ -6735,9 +7017,10 @@ function Invoke-OzChangeSet {
     $danger = @($ToApply | Where-Object { $_.Risk -eq 'Danger' })
     if ($danger.Count) {
         $msg = (T "You are about to change DANGER ZONE settings:`n`n{0}`n`nThese lower the security of this PC. Continue?" (($danger | ForEach-Object { '  - ' + (T $_.Name) }) -join "`n"))
-        if ([System.Windows.MessageBox]::Show($msg, $Oz.AppName, 'YesNo', 'Warning') -ne 'Yes') { Write-OzLog (T 'Cancelled.') 'WARN'; return }
+        if ((Show-OzDialog -Text $msg -Buttons YesNo -Kind Warning) -ne 'Yes') { Write-OzLog (T 'Cancelled.') 'WARN'; return }
     }
     if ($ToApply.Count -and $Oz.UI.ChkRestorePoint.IsChecked) { [void](New-OzRestorePoint) }
+    $activeBefore = @($Oz.Rows.Values | Where-Object { $_.Applicable -and $_.Applied }).Count
 
     Set-OzBusy $true (T 'Applying {0} change(s)...' $total)
     $Oz.UI.ApplyProgress.Visibility = 'Visible'
@@ -6789,9 +7072,27 @@ function Invoke-OzChangeSet {
     $lvl = if ($fail -or $blocked.Count) { 'WARN' } else { 'OK' }
     Write-OzLog (T 'Done: {0} succeeded, {1} failed.' $ok $fail) $lvl
     if ($blocked.Count) { Write-OzLog (T 'Windows did not accept these on this PC, so they stay OFF: {0}' ($blocked -join ', ')) 'WARN' }
-    if ($reboot) {
-        $r = [System.Windows.MessageBox]::Show((T "Some changes take effect after a restart.`n`nRestart now?"), $Oz.AppName, 'YesNo', 'Information')
+    Show-OzResults -Total $total -Ok $ok -Fail $fail -Blocked $blocked -Reboot $reboot -ActiveBefore $activeBefore
+}
+
+function Show-OzResults {
+    # The card shown after a batch of changes: what happened, what is active now, restart or not
+    param([int]$Total, [int]$Ok, [int]$Fail, [string[]]$Blocked = @(), [bool]$Reboot, [int]$ActiveBefore)
+    $Blocked = @($Blocked | Where-Object { $_ })
+    if ($Total -lt 3 -and -not $Fail -and -not $Blocked.Count -and -not $Reboot) { return }
+    $activeAfter = @($Oz.Rows.Values | Where-Object { $_.Applicable -and $_.Applied }).Count
+    $rows = @(@{ Text = (T '{0} change(s) done' $Ok); Color = '#2BFF9A'; Glyph = [char]0xE73E })
+    if ($Fail) { $rows += @{ Text = (T '{0} failed - see the Log tab' $Fail); Color = '#FF3B5C'; Glyph = [char]0xEA39 } }
+    if ($Blocked.Count) { $rows += @{ Text = (T 'Windows kept these OFF: {0}' ($Blocked -join ', ')); Color = '#FFB020'; Glyph = [char]0xE7BA } }
+    $rows += @{ Text = (T 'Tweaks active: {0} -> {1}' $ActiveBefore $activeAfter); Color = '#00E5FF'; Glyph = [char]0xE945 }
+    $rows += @{ Text = (T 'Undo any of it in BACKUP & UNDO.'); Color = '#8A9BBF'; Glyph = [char]0xE777 }
+    $kind = if ($Fail -or $Blocked.Count) { 'Warning' } else { 'Success' }
+    if ($Reboot) {
+        $rows += @{ Text = (T 'Some changes take effect after a restart.'); Color = '#FFB020'; Glyph = [char]0xE7E8 }
+        $r = Show-OzDialog -Title (T 'DONE') -Text (T 'Changes finished.') -Kind $kind -Rows $rows -Buttons YesNo -Labels @((T 'RESTART NOW'), (T 'LATER'))
         if ($r -eq 'Yes') { Restart-Computer -Force }
+    } else {
+        [void](Show-OzDialog -Title (T 'DONE') -Text (T 'Changes finished.') -Kind $kind -Rows $rows)
     }
 }
 #endregion
@@ -6874,7 +7175,629 @@ function Invoke-OzProfile {
     if ($Key -in 'maxperf', 'competitive' -and $Oz.Sys.IsLaptop) { $extra = "`n`n" + (T 'Laptop detected: the Performance plan runs hotter. Use it while plugged in, or switch to COOL & QUIET later.') }
     $rp = if ($Oz.UI.ChkRestorePoint.IsChecked) { "`n" + (T 'A System Restore point is created first.') } else { '' }
     $msg = (T "Apply {0}?`n`n{1} change(s) will be made on this PC." (T $p.Name) $pending) + $rp + $extra
-    if ([System.Windows.MessageBox]::Show($msg, $Oz.AppName, 'YesNo', 'Question') -eq 'Yes') { Invoke-OzApplyPending }
+    if ((Show-OzDialog -Text $msg -Buttons YesNo -Kind Question) -eq 'Yes') { Invoke-OzApplyPending }
+}
+#endregion
+
+#region ============================ GAMES ============================
+# Competitive settings for popular shooters, matched to this PC. The app only READS each game's
+# own settings file and compares it with the recommended values. It never writes to game files:
+# games rewrite them on exit and anti-cheat systems watch them. Setting, menu and launcher names
+# stay in English so they match the English game menus exactly.
+
+function Read-OzTextShared {
+    # Reads a text file even while a game or launcher has it open. Nothing is returned if it is missing.
+    param([string]$Path, [switch]$Lines)
+    if (-not $Path -or -not [IO.File]::Exists($Path)) { return }
+    $t = $null
+    try {
+        $fs = New-Object IO.FileStream($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+        try { $t = (New-Object IO.StreamReader($fs, $true)).ReadToEnd() } finally { $fs.Dispose() }
+    } catch { return }
+    if ($Lines) { $t -split "`r?`n" } else { $t }
+}
+
+function ConvertTo-OzNumber {
+    # "0.000000" -> 0, "144" -> 144, "False" -> nothing
+    param([string]$Text)
+    $n = 0.0
+    if ([double]::TryParse(([string]$Text).Trim(), [Globalization.NumberStyles]::Float, [Globalization.CultureInfo]::InvariantCulture, [ref]$n)) { return $n }
+}
+
+function Get-OzSavedGamesDir {
+    try {
+        $v = (Get-ItemProperty -LiteralPath 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders' -ErrorAction Stop).'{4C5C32FF-BB9D-43b0-B5B4-2D72E54EAAA4}'
+        if ($v) { return [Environment]::ExpandEnvironmentVariables([string]$v) }
+    } catch { }
+    Join-Path $env:USERPROFILE 'Saved Games'
+}
+
+function Get-OzRefreshRate {
+    # Refresh rate of the main screen, from the hardware scan ("1920x1080 @ 144 Hz")
+    if ($Oz.Sys -and $Oz.Sys.GPU -and $Oz.Sys.GPU.Primary -and ([string]$Oz.Sys.GPU.Primary.Resolution -match '@\s*(\d+)\s*Hz')) {
+        $hz = [int]$Matches[1]
+        if ($hz -ge 30 -and $hz -le 1000) { return $hz }
+    }
+    0
+}
+
+function Get-OzSteamInfo {
+    # Steam's own folder and every Steam library folder on this PC
+    $root = $null
+    foreach ($k in 'HKCU:\Software\Valve\Steam', 'HKLM:\SOFTWARE\WOW6432Node\Valve\Steam', 'HKLM:\SOFTWARE\Valve\Steam') {
+        try {
+            $p = Get-ItemProperty -LiteralPath $k -ErrorAction Stop
+            $v = if ($p.SteamPath) { [string]$p.SteamPath } elseif ($p.InstallPath) { [string]$p.InstallPath } else { '' }
+            $v = $v.Replace('/', '\')
+            if ($v -and (Test-Path -LiteralPath $v)) { $root = $v; break }
+        } catch { }
+    }
+    $libs = New-Object System.Collections.Generic.List[string]
+    if ($root) {
+        $libs.Add($root)
+        foreach ($line in (Read-OzTextShared (Join-Path $root 'steamapps\libraryfolders.vdf') -Lines)) {
+            if ($line -match '^\s*"path"\s+"(.+)"\s*$') {
+                $lp = $Matches[1].Replace('\\', '\')
+                if (-not ($libs | Where-Object { $_.TrimEnd('\') -eq $lp.TrimEnd('\') }) -and (Test-Path -LiteralPath $lp)) { $libs.Add($lp) }
+            }
+        }
+    }
+    [pscustomobject]@{ Root = $root; Libraries = @($libs) }
+}
+
+function Find-OzSteamGame {
+    # Install folder of a Steam game, from its appmanifest in any library
+    param($Steam, [int]$AppId)
+    foreach ($lib in @($Steam.Libraries)) {
+        foreach ($line in (Read-OzTextShared (Join-Path $lib "steamapps\appmanifest_$AppId.acf") -Lines)) {
+            if ($line -match '^\s*"installdir"\s+"(.+)"\s*$') {
+                $dir = Join-Path $lib ('steamapps\common\' + $Matches[1].Replace('\\', '\'))
+                if (Test-Path -LiteralPath $dir) { return $dir }
+            }
+        }
+    }
+}
+
+function Get-OzEpicGames {
+    # Games installed with the Epic Games Launcher, from its install manifests
+    $dir = Join-Path $env:ProgramData 'Epic\EpicGamesLauncher\Data\Manifests'
+    if (-not (Test-Path -LiteralPath $dir)) { return }
+    foreach ($f in @(Get-ChildItem -LiteralPath $dir -Filter '*.item' -File -ErrorAction SilentlyContinue)) {
+        try {
+            $raw = Read-OzTextShared $f.FullName
+            if (-not $raw) { continue }
+            $j = $raw | ConvertFrom-Json
+            if ($j.InstallLocation) {
+                [pscustomobject]@{ AppName = [string]$j.AppName; Name = [string]$j.DisplayName; Location = [string]$j.InstallLocation; Exe = [string]$j.LaunchExecutable }
+            }
+        } catch { }
+    }
+}
+
+function Get-OzUninstallEntries {
+    # Installed programs as Windows lists them (both registry views, machine and user)
+    $list = New-Object System.Collections.Generic.List[object]
+    $seen = @{}
+    foreach ($hive in [Microsoft.Win32.RegistryHive]::LocalMachine, [Microsoft.Win32.RegistryHive]::CurrentUser) {
+        foreach ($view in [Microsoft.Win32.RegistryView]::Registry64, [Microsoft.Win32.RegistryView]::Registry32) {
+            $base = $null; $root = $null
+            try {
+                $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey($hive, $view)
+                $root = $base.OpenSubKey('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall')
+                if ($root) {
+                    foreach ($name in $root.GetSubKeyNames()) {
+                        $k = $null
+                        try {
+                            $k = $root.OpenSubKey($name)
+                            $dn = if ($k) { [string]$k.GetValue('DisplayName') } else { '' }
+                            if ($dn -and -not $seen.ContainsKey("$name|$dn")) {
+                                $seen["$name|$dn"] = $true
+                                $list.Add([pscustomobject]@{ Key = $name; Name = $dn; Location = [string]$k.GetValue('InstallLocation'); Icon = [string]$k.GetValue('DisplayIcon') })
+                            }
+                        } catch { } finally { if ($k) { $k.Close() } }
+                    }
+                }
+            } catch { } finally {
+                if ($root) { $root.Close() }
+                if ($base) { $base.Close() }
+            }
+        }
+    }
+    $list
+}
+
+function Get-OzIconFile {
+    # First existing .exe / .ico among: the DisplayIcon from Windows, then known files in the install folder
+    param([string]$DisplayIcon, [string]$Location, [string[]]$Exes)
+    $cands = @()
+    if ($DisplayIcon) { $cands += (($DisplayIcon -replace ',\s*-?\d+\s*$', '').Trim().Trim('"')) }
+    if ($Location) { foreach ($e in @($Exes)) { if ($e) { $cands += (Join-Path $Location $e.Replace('/', '\')) } } }
+    foreach ($c in $cands) {
+        try { if ($c -match '\.(exe|ico)$' -and [IO.File]::Exists($c)) { return $c } } catch { }
+    }
+}
+
+function Get-OzFileIcon {
+    # The icon Windows shows for a file, as an image WPF can draw. Nothing if it cannot be read.
+    param([string]$Path)
+    if (-not $Path -or -not [IO.File]::Exists($Path)) { return }
+    try {
+        Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+        $ico = [System.Drawing.Icon]::ExtractAssociatedIcon($Path)
+        if (-not $ico) { return }
+        try {
+            $src = [System.Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon($ico.Handle, [System.Windows.Int32Rect]::Empty, [System.Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions())
+            $src.Freeze()
+            $src
+        } finally { $ico.Dispose() }
+    } catch { }
+}
+
+function Read-OzGameConfig {
+    # Flat view of a game's settings file. INI keys become "Section|Key"; KeyValues (VDF) keys stay as they are.
+    param([string]$Path, [ValidateSet('Vdf', 'Ini')][string]$Format)
+    $map = @{}
+    $section = ''
+    foreach ($line in (Read-OzTextShared $Path -Lines)) {
+        if ($Format -eq 'Vdf') {
+            if ($line -match '^\s*"([^"]+)"\s+"([^"]*)"') { $map[$Matches[1]] = $Matches[2] }
+        } else {
+            if ($line -match '^\s*\[(.+)\]\s*$') { $section = $Matches[1]; continue }
+            if ($line -match '^\s*([^=;#\[]+?)\s*=\s*(.*?)\s*$') { $map["$section|$($Matches[1])"] = $Matches[2] }
+        }
+    }
+    $map
+}
+
+function Format-OzGameValue {
+    param($Check, [string]$Raw)
+    $n = ConvertTo-OzNumber $Raw
+    $norm = if ($null -ne $n) { $n.ToString('0.##', [Globalization.CultureInfo]::InvariantCulture) } else { $Raw.Trim() }
+    if ($Check.Labels) {
+        foreach ($k in @($Check.Labels.Keys)) { if ([string]$k -ieq $norm) { return [string]$Check.Labels[$k] } }
+    }
+    if ($Check.Suffix -and $null -ne $n) { return $norm + $Check.Suffix }
+    $norm
+}
+
+function Test-OzGameCheck {
+    # Compares one value in the game's file with the recommended one. Ok is $null when the
+    # value is not in this version of the file (games rename settings between updates).
+    param($Check, $Map)
+    $key = $null
+    foreach ($k in @($Check.Entries)) { if ($Map.ContainsKey($k)) { $key = $k; break } }
+    $raw = if ($key) { [string]$Map[$key] } elseif ($null -ne $Check.Default) { [string]$Check.Default } else { $null }
+    if ($null -eq $raw) { return [pscustomobject]@{ Name = $Check.Name; Current = ''; Want = $Check.WantText; Ok = $null } }
+    $a = ConvertTo-OzNumber $raw
+    $b = ConvertTo-OzNumber ([string]$Check.Want)
+    $ok = switch ([string]$Check.Op) {
+        'ge' { ($null -ne $a) -and ($null -ne $b) -and ($a -ge $b) }
+        default {
+            if ($null -ne $a -and $null -ne $b) { $a -eq $b } else { $raw.Trim() -ieq ([string]$Check.Want).Trim() }
+        }
+    }
+    [pscustomobject]@{ Name = $Check.Name; Current = (Format-OzGameValue $Check $raw); Want = $Check.WantText; Ok = [bool]$ok }
+}
+
+function Get-OzGameCatalog {
+    # Every supported game. Recommendations follow this PC: GPU maker, video memory, laptop or not.
+    $sys = $Oz.Sys
+    $gpu = if ($sys -and $sys.GPU) { $sys.GPU.Primary } else { $null }
+    $nvidia = [bool]($gpu -and $gpu.Vendor -eq 'NVIDIA')
+    $vram = if ($gpu) { [double]$gpu.VramGB } else { 0 }
+    $laptop = [bool]($sys -and $sys.IsLaptop)
+    $hz = Get-OzRefreshRate
+    $tex = if ($vram -ge 6) { 'Medium' } else { 'Low' }
+    $reflex = 'On + Boost'
+
+    $where = @{
+        'Steam'  = 'Steam > Library > right-click {0} > Properties > General > Launch Options'
+        'EA app' = 'EA app > Library > three dots on {0} > View properties > Advanced launch options'
+        'Epic'   = 'Epic Games Launcher > Library > three dots on {0} > Manage > Launch Options'
+    }
+
+    # ---------------- Apex Legends ----------------
+    $apexBudget = if ($vram -ge 10) { 'Very High (6GB VRAM)' } elseif ($vram -ge 7) { 'High (4GB VRAM)' } elseif ($vram -ge 5) { 'Medium (3GB VRAM)' } elseif ($vram -ge 3.5) { 'Low (2-3GB VRAM)' } else { 'Very Low (2GB VRAM)' }
+    $apexMenu = @(
+        @('Display Mode', 'Full Screen'),
+        @('V-Sync', 'Disabled')
+    )
+    if ($nvidia) { $apexMenu += , @('NVIDIA Reflex', 'Enabled + Boost') }
+    $apexMenu += @(
+        @('Adaptive Resolution FPS Target', '0'),
+        @('Texture Streaming Budget', $apexBudget),
+        @('Ambient Occlusion Quality', 'Disabled'),
+        @('Sun Shadow Coverage', 'Low'),
+        @('Sun Shadow Detail', 'Low'),
+        @('Spot Shadow Detail', 'Disabled'),
+        @('Volumetric Lighting', 'Disabled'),
+        @('Model Detail', 'Low'),
+        @('Effects Detail', 'Low'),
+        @('Impact Marks', 'Disabled'),
+        @('Ragdolls', 'Low')
+    )
+    $apexArgs = @(@{ Label = (T 'Highest FPS'); Args = '-dev +fps_max 0'; Rec = -not ($laptop -and $hz) })
+    if ($hz) { $apexArgs += @{ Label = (T 'Capped to your {0} Hz screen (cooler, steadier)' $hz); Args = "-dev +fps_max $hz"; Rec = $laptop } }
+
+    # ---------------- Fortnite ----------------
+    $fnMenu = @(
+        @('Window Mode', 'Fullscreen'),
+        @('Rendering Mode', 'Performance'),
+        @('Frame Rate Limit', $(if ($laptop -and $hz) { "$hz FPS" } else { 'Unlimited' })),
+        @('V-Sync', 'Off'),
+        @('3D Resolution', '100%'),
+        @('View Distance', 'Near'),
+        @('Textures', 'Low'),
+        @('Meshes', 'Low')
+    )
+    if ($nvidia) { $fnMenu += , @('NVIDIA Reflex Low Latency', $reflex) }
+    $fnMenu += , @('Show FPS', 'On')
+    $fs = '/Script/FortniteGame.FortGameUserSettings'
+
+    # ---------------- Counter-Strike 2 ----------------
+    $csMenu = @(
+        @('Display Mode', 'Fullscreen'),
+        @('Boost Player Contrast', 'Enabled'),
+        @('Wait for Vertical Sync', 'Disabled')
+    )
+    if ($nvidia) { $csMenu += , @('NVIDIA Reflex Low Latency', 'Enabled') }
+    $csMenu += @(
+        @('Multisampling Anti-Aliasing Mode', 'CMAA2'),
+        @('Global Shadow Quality', 'Low'),
+        @('Dynamic Shadows', 'All'),
+        @('Texture Detail', $tex),
+        @('Shader Detail', 'Low'),
+        @('Particle Detail', 'Low'),
+        @('Ambient Occlusion', 'Disabled'),
+        @('FidelityFX Super Resolution', 'Disabled')
+    )
+    $csChecks = @(
+        @{ Name = 'Display mode'; Entries = @('setting.fullscreen'); Want = '1'; WantText = 'Fullscreen'; Labels = @{ '1' = 'Fullscreen'; '0' = 'Windowed' } },
+        @{ Name = 'Vertical sync'; Entries = @('setting.mat_vsync'); Want = '0'; WantText = 'Disabled'; Labels = @{ '0' = 'Disabled'; '1' = 'Enabled' } }
+    )
+    if ($nvidia) { $csChecks += @{ Name = 'NVIDIA Reflex'; Entries = @('setting.r_low_latency'); Want = '1'; Op = 'ge'; WantText = 'Enabled'; Labels = @{ '0' = 'Disabled'; '1' = 'Enabled'; '2' = 'Enabled + Boost' } } }
+
+    # ---------------- Valorant ----------------
+    $valMenu = @(
+        @('Display Mode', 'Fullscreen'),
+        @('Multithreaded Rendering', 'On'),
+        @('Material Quality', 'Low'),
+        @('Texture Quality', $tex),
+        @('Detail Quality', 'Low'),
+        @('UI Quality', 'Low'),
+        @('Vignette', 'Off'),
+        @('VSync', 'Off'),
+        @('Anti-Aliasing', 'MSAA 2x'),
+        @('Anisotropic Filtering', '4x'),
+        @('Bloom', 'Off'),
+        @('Distortion', 'Off'),
+        @('Cast Shadows', 'Off')
+    )
+    if ($nvidia) { $valMenu += , @('NVIDIA Reflex Low Latency', $reflex) }
+    $valMenu += @(@('Limit FPS in Menus', 'On'), @('Limit FPS in Background', 'On'))
+
+    # ---------------- Overwatch 2 ----------------
+    $owMenu = @(
+        @('Display Mode', 'Fullscreen'),
+        @('VSync', 'Off'),
+        @('Triple Buffering', 'Off'),
+        @('Reduce Buffering', 'On')
+    )
+    if ($nvidia) { $owMenu += , @('NVIDIA Reflex', 'Enabled + Boost') }
+    $owMenu += @(
+        @('Frame Rate', $(if ($hz) { "Custom, at least $hz" } else { 'Custom, at least your refresh rate' })),
+        @('Dynamic Render Scale', 'Off'),
+        @('Render Scale', '100%'),
+        @('Graphics Quality', 'Low'),
+        @('Texture Quality', $tex),
+        @('Ambient Occlusion', 'Off')
+    )
+
+    # ---------------- Rainbow Six Siege X ----------------
+    $r6Menu = @(
+        @('Display Mode', 'Fullscreen'),
+        @('V-Sync', 'Off')
+    )
+    if ($nvidia) { $r6Menu += , @('NVIDIA Reflex', 'On + Boost') }
+    $r6Menu += @(
+        @('Texture Quality', $tex),
+        @('Shadow Quality', 'Low'),
+        @('Reflection Quality', 'Low'),
+        @('Ambient Occlusion', 'Off'),
+        @('Lens Effects', 'Off'),
+        @('Zoom-In Depth of Field', 'Off'),
+        @('Render Scaling', '100')
+    )
+
+    @(
+        [pscustomobject]@{
+            Id = 'apex'; Name = 'Apex Legends'; Mono = 'AL'; Match = '^Apex Legends'; SteamAppId = 1172470; EpicApp = ''
+            DefaultLauncher = 'EA app'; Launchers = @('Steam', 'EA app'); Exes = @('r5apex.exe', 'r5apex_dx12.exe')
+            Config = { Join-Path (Get-OzSavedGamesDir) 'Respawn\Apex\local\videoconfig.txt' }; Format = 'Vdf'
+            Checks = @(
+                @{ Name = 'Display mode'; Entries = @('setting.fullscreen'); Want = '1'; WantText = 'Full Screen'; Labels = @{ '1' = 'Full Screen'; '0' = 'Windowed / Borderless' } },
+                @{ Name = 'V-Sync'; Entries = @('setting.mat_vsync_mode', 'setting.mat_vsync_mod'); Want = '0'; WantText = 'Disabled'; Labels = @{ '0' = 'Disabled'; '1' = 'Double Buffered'; '2' = 'Triple Buffered'; '3' = 'Adaptive'; '4' = 'Adaptive (1/2 Rate)' } },
+                @{ Name = 'Adaptive resolution'; Entries = @('setting.dvs_enable'); Want = '0'; WantText = 'Off'; Labels = @{ '0' = 'Off'; '1' = 'On' } },
+                @{ Name = 'Ambient occlusion'; Entries = @('setting.ssao_enabled', 'setting.ssao_quality'); Want = '0'; WantText = 'Disabled'; Labels = @{ '0' = 'Disabled' } },
+                @{ Name = 'Volumetric lighting'; Entries = @('setting.volumetric_lighting'); Want = '0'; WantText = 'Disabled'; Labels = @{ '0' = 'Disabled'; '1' = 'Enabled' } }
+            )
+            MenuPath = 'Settings > Video'; Menu = $apexMenu
+            LaunchArgs = $apexArgs
+            LaunchNote = (T '-dev skips the intro videos. +fps_max 0 removes the frame cap; the capped version runs cooler and steadier, which suits laptops.')
+            LaunchWhere = $where
+        }
+        [pscustomobject]@{
+            Id = 'fortnite'; Name = 'Fortnite'; Mono = 'FN'; Match = '^Fortnite$'; SteamAppId = 0; EpicApp = 'Fortnite'
+            DefaultLauncher = 'Epic'; Launchers = @('Epic'); Exes = @('FortniteGame\Binaries\Win64\FortniteClient-Win64-Shipping.exe', 'FortniteGame\Binaries\Win64\FortniteLauncher.exe')
+            Config = { Join-Path $env:LOCALAPPDATA 'FortniteGame\Saved\Config\WindowsClient\GameUserSettings.ini' }; Format = 'Ini'
+            Checks = @(
+                @{ Name = 'Rendering mode'; Entries = @('D3DRHIPreference|PreferredFeatureLevel'); Default = 'sm5'; Want = 'es31'; WantText = 'Performance'; Labels = @{ 'es31' = 'Performance'; 'sm5' = 'DirectX 11 / 12'; 'sm6' = 'DirectX 12' } },
+                @{ Name = 'Window mode'; Entries = @("$fs|FullscreenMode"); Want = '0'; WantText = 'Fullscreen'; Labels = @{ '0' = 'Fullscreen'; '1' = 'Windowed Fullscreen'; '2' = 'Windowed' } },
+                @{ Name = 'V-Sync'; Entries = @("$fs|bUseVSync"); Want = 'False'; WantText = 'Off'; Labels = @{ 'False' = 'Off'; 'True' = 'On' } },
+                @{ Name = 'Motion blur'; Entries = @("$fs|bMotionBlur"); Want = 'False'; WantText = 'Off'; Labels = @{ 'False' = 'Off'; 'True' = 'On' } },
+                @{ Name = 'Ray tracing'; Entries = @("$fs|bRayTracing"); Want = 'False'; WantText = 'Off'; Labels = @{ 'False' = 'Off'; 'True' = 'On' } }
+            )
+            MenuPath = 'Settings > Display and Graphics'; Menu = $fnMenu
+            LaunchArgs = @(@{ Label = (T 'Force Performance mode'); Args = '-FeatureLevelES31'; Rec = $false })
+            LaunchNote = (T 'Only needed if Rendering Mode keeps switching back from Performance. Epic documents this option to force it.')
+            LaunchWhere = $where
+        }
+        [pscustomobject]@{
+            Id = 'cs2'; Name = 'Counter-Strike 2'; Mono = 'CS'; Match = '^Counter-Strike 2$'; SteamAppId = 730; EpicApp = ''
+            DefaultLauncher = 'Steam'; Launchers = @('Steam'); Exes = @('game\bin\win64\cs2.exe')
+            Config = {
+                param($Steam)
+                if ($Steam -and $Steam.Root) {
+                    Get-ChildItem -Path (Join-Path $Steam.Root 'userdata\*\730\local\cfg\cs2_video.txt') -File -ErrorAction SilentlyContinue |
+                        Sort-Object LastWriteTime -Descending | Select-Object -First 1 -ExpandProperty FullName
+                }
+            }; Format = 'Vdf'
+            Checks = $csChecks
+            MenuPath = 'Settings > Video'; Menu = $csMenu
+            LaunchArgs = @()
+            LaunchNote = (T 'Not needed. CS2 ignores most old CS:GO launch options (-tickrate, -high, -threads). Set everything in the game menu.')
+            LaunchWhere = $where
+        }
+        [pscustomobject]@{
+            Id = 'valorant'; Name = 'VALORANT'; Mono = 'VA'; Match = '^VALORANT$'; SteamAppId = 0; EpicApp = ''
+            DefaultLauncher = 'Riot Client'; Launchers = @(); Exes = @('VALORANT.exe', 'ShooterGame\Binaries\Win64\VALORANT-Win64-Shipping.exe')
+            Config = $null; Format = ''; Checks = @()
+            MenuPath = 'Settings > Video'; Menu = $valMenu
+            LaunchArgs = @()
+            LaunchNote = (T 'Not available. The Riot Client has no launch options; everything is set in the game menu.')
+            LaunchWhere = $where
+        }
+        [pscustomobject]@{
+            Id = 'overwatch'; Name = 'Overwatch 2'; Mono = 'OW'; Match = '^Overwatch( 2)?$'; SteamAppId = 2357570; EpicApp = ''
+            DefaultLauncher = 'Battle.net'; Launchers = @(); Exes = @('_retail_\Overwatch.exe', 'Overwatch.exe', 'Overwatch Launcher.exe')
+            Config = $null; Format = ''; Checks = @()
+            MenuPath = 'Options > Video'; Menu = $owMenu
+            LaunchArgs = @()
+            LaunchNote = (T 'Not needed. Overwatch 2 has no launch options that raise FPS.')
+            LaunchWhere = $where
+        }
+        [pscustomobject]@{
+            Id = 'r6'; Name = 'Rainbow Six Siege X'; Mono = 'R6'; Match = 'Rainbow Six.*Siege'; SteamAppId = 359550; EpicApp = ''
+            DefaultLauncher = 'Ubisoft Connect'; Launchers = @(); Exes = @('RainbowSix.exe', 'RainbowSix_Vulkan.exe')
+            Config = $null; Format = ''; Checks = @()
+            MenuPath = 'Options > Display and Graphics'; Menu = $r6Menu
+            LaunchArgs = @()
+            LaunchNote = (T 'Not needed. Siege X has no launch options that raise FPS.')
+            LaunchWhere = $where
+        }
+    )
+}
+
+function Find-OzGame {
+    # Where a game is installed and which launcher manages it. Nothing if it is not installed.
+    param($Game, $Uninstall, $Steam, $Epic)
+    if ($Game.EpicApp) {
+        $e = @($Epic | Where-Object { $_.AppName -eq $Game.EpicApp -or $_.Name -eq $Game.Name }) | Select-Object -First 1
+        if ($e -and (Test-Path -LiteralPath $e.Location)) {
+            return [pscustomobject]@{ Launcher = 'Epic'; Location = $e.Location; Icon = (Get-OzIconFile -Location $e.Location -Exes (@($e.Exe) + $Game.Exes)) }
+        }
+    }
+    if ($Game.SteamAppId) {
+        $d = Find-OzSteamGame $Steam $Game.SteamAppId
+        if ($d) { return [pscustomobject]@{ Launcher = 'Steam'; Location = $d; Icon = (Get-OzIconFile -Location $d -Exes $Game.Exes) } }
+    }
+    $u = @($Uninstall | Where-Object { $_.Name -match $Game.Match }) | Select-Object -First 1
+    if ($u) {
+        $l = if ($u.Key -like 'Steam App *') { 'Steam' } elseif ($u.Key -like 'Uplay Install *') { 'Ubisoft Connect' } elseif ($u.Key -like 'Riot Game *') { 'Riot Client' } else { $Game.DefaultLauncher }
+        return [pscustomobject]@{ Launcher = $l; Location = $u.Location; Icon = (Get-OzIconFile -DisplayIcon $u.Icon -Location $u.Location -Exes $Game.Exes) }
+    }
+}
+
+function Get-OzGameScan {
+    # Every supported game: installed or not, where, its settings file and how it compares
+    $un = @(Get-OzUninstallEntries)
+    $steam = Get-OzSteamInfo
+    $epic = @(Get-OzEpicGames)
+    foreach ($g in (Get-OzGameCatalog)) {
+        $found = $null
+        try { $found = Find-OzGame $g $un $steam $epic } catch { }
+        $cfg = $null
+        if ($g.Config) { try { $cfg = [string](& $g.Config $steam | Select-Object -First 1) } catch { } }
+        $review = @()
+        $cfgFound = [bool]($cfg -and [IO.File]::Exists($cfg))
+        if ($cfgFound -and $g.Checks.Count) {
+            $map = Read-OzGameConfig $cfg $g.Format
+            foreach ($c in $g.Checks) { $review += Test-OzGameCheck $c $map }
+        }
+        [pscustomobject]@{
+            Game = $g; Installed = [bool]$found
+            Launcher = $(if ($found) { $found.Launcher } else { '' })
+            Location = $(if ($found) { $found.Location } else { '' })
+            IconPath = $(if ($found) { $found.Icon } else { '' })
+            ConfigPath = $cfg; ConfigFound = $cfgFound; Review = $review
+        }
+    }
+}
+
+function Show-OzGames {
+    param($Games)
+    $Games = @($Games | Where-Object { $_ })
+    $Oz.LastGames = $Games
+    $panel = $Oz.UI.GamesPanel
+    $panel.Children.Clear()
+    $inst = @($Games | Where-Object { $_.Installed }).Count
+    $Oz.UI.GamesHint.Text = if ($inst) {
+        T '{0} of {1} games found on this PC. Setting and launcher names are shown as they appear in English menus.' $inst $Games.Count
+    } else {
+        T 'None of these games were found on this PC. The recommended settings still apply if you install one.'
+    }
+    # Installed games first, in catalog order
+    foreach ($r in @($Games | Where-Object { $_.Installed }) + @($Games | Where-Object { -not $_.Installed })) {
+        [void]$panel.Children.Add((New-OzGameCard $r))
+    }
+    Write-OzLog (T 'Games checked: {0} found on this PC.' $inst) 'OK'
+}
+
+function New-OzGameCard {
+    param($R)
+    $g = $R.Game
+    $card = New-OzCard
+    $sp = New-Object System.Windows.Controls.StackPanel
+
+    # ---- header: icon, name, where it is installed, settings summary, details toggle ----
+    $head = New-OzColumns @('Auto', '*', 'Auto')
+    $tile = New-Object System.Windows.Controls.Border
+    $tile.Width = 48; $tile.Height = 48
+    $tile.CornerRadius = New-Object System.Windows.CornerRadius(12)
+    $tile.Background = Get-OzBrush '#0C1222'
+    $tile.BorderBrush = Get-OzBrush $(if ($R.Installed) { '#5500E5FF' } else { '#1B2A48' })
+    $tile.BorderThickness = New-OzThickness '1'
+    $tile.Margin = New-OzThickness '0,0,14,0'
+    $img = if ($R.IconPath) { Get-OzFileIcon $R.IconPath } else { $null }
+    if ($img) {
+        $im = New-Object System.Windows.Controls.Image
+        $im.Source = $img
+        $im.Width = 32; $im.Height = 32
+        [System.Windows.Media.RenderOptions]::SetBitmapScalingMode($im, [System.Windows.Media.BitmapScalingMode]::HighQuality)
+        $tile.Child = $im
+    } else {
+        $mono = New-OzText -Text $g.Mono -Size 16 -Color $(if ($R.Installed) { '#00E5FF' } else { '#5D6E92' }) -Display -Bold
+        $mono.HorizontalAlignment = 'Center'; $mono.VerticalAlignment = 'Center'
+        $tile.Child = $mono
+    }
+    Add-OzGridChild $head $tile 0
+    $ttl = New-Object System.Windows.Controls.StackPanel
+    $ttl.VerticalAlignment = 'Center'
+    [void]$ttl.Children.Add((New-OzText -Text $g.Name -Size 17 -Color '#E6F1FF' -Display -Bold))
+    $status = if ($R.Installed) { New-OzText -Text (T 'Installed with {0}' $R.Launcher) -Size 11.5 -Color '#2BFF9A' -Display -Semi -Margin '0,2,0,0' }
+    else { New-OzText -Text (T 'Not found on this PC') -Size 11.5 -Color '#5D6E92' -Display -Semi -Margin '0,2,0,0' }
+    [void]$ttl.Children.Add($status)
+    Add-OzGridChild $head $ttl 1
+    $right = New-Object System.Windows.Controls.StackPanel
+    $right.Orientation = 'Horizontal'
+    $right.VerticalAlignment = 'Center'
+    $checked = @($R.Review | Where-Object { $null -ne $_.Ok })
+    if ($checked.Count) {
+        $good = @($checked | Where-Object { $_.Ok }).Count
+        $color = if ($good -eq $checked.Count) { '#2BFF9A' } else { '#FFB020' }
+        $badge = New-OzBadge -Text (T '{0} / {1} SETTINGS OK' $good $checked.Count) -Color $color
+        $badge.Margin = New-OzThickness '0,0,10,0'
+        [void]$right.Children.Add($badge)
+    }
+    $details = New-Object System.Windows.Controls.StackPanel
+    $details.Margin = New-OzThickness '0,14,0,0'
+    $details.Visibility = if ($R.Installed) { 'Visible' } else { 'Collapsed' }
+    $toggle = New-OzButton -Text $(if ($R.Installed) { T 'HIDE' } else { T 'DETAILS' }) -Style 'Neon' -Margin '0'
+    $toggle.Tag = @{ Panel = $details; Show = (T 'DETAILS'); Hide = (T 'HIDE') }
+    $toggle.Add_Click({
+            $t = $this.Tag
+            $open = $t.Panel.Visibility -ne 'Visible'
+            $t.Panel.Visibility = $(if ($open) { 'Visible' } else { 'Collapsed' })
+            $this.Content = $(if ($open) { $t.Hide } else { $t.Show })
+        })
+    [void]$right.Children.Add($toggle)
+    Add-OzGridChild $head $right 2
+    [void]$sp.Children.Add($head)
+
+    # ---- the game's own settings file ----
+    if ($g.Checks.Count -and ($R.Installed -or $R.ConfigFound)) {
+        [void]$details.Children.Add((New-OzText -Text (T 'YOUR SETTINGS FILE') -Size 10.5 -Color '#5D6E92' -Display -Bold -Margin '0,0,0,6'))
+        if (-not $R.ConfigFound) {
+            [void]$details.Children.Add((New-OzText -Text (T 'Settings file not found. Start the game once, close it, then press RESCAN GAMES.') -Size 12.5 -Wrap -Margin '0,0,0,12'))
+        } else {
+            foreach ($c in $R.Review) {
+                $row = New-OzRowBorder -Margin '0,0,0,6' -Padding '12,7,12,7'
+                $cols = New-OzColumns @('Auto', '*', 'Auto')
+                if ($null -eq $c.Ok) { $gl = [char]0xE9CE; $gc = '#5D6E92' } elseif ($c.Ok) { $gl = [char]0xE73E; $gc = '#2BFF9A' } else { $gl = [char]0xE7BA; $gc = '#FFB020' }
+                Add-OzGridChild $cols (New-OzText -Text ([string]$gl) -Size 13 -Color $gc -Icon -Margin '0,1,10,0') 0
+                Add-OzGridChild $cols (New-OzText -Text $c.Name -Size 12.5 -Color '#E6F1FF') 1
+                $val = if ($null -eq $c.Ok) { New-OzText -Text (T 'not in this version of the file') -Size 12 -Color '#5D6E92' }
+                elseif ($c.Ok) { New-OzText -Text $c.Current -Size 12 -Color '#2BFF9A' -Mono }
+                else { New-OzText -Text (T '{0}  ->  set to {1}' $c.Current $c.Want) -Size 12 -Color '#FFB020' -Mono }
+                Add-OzGridChild $cols $val 2
+                $row.Child = $cols
+                [void]$details.Children.Add($row)
+            }
+            $folder = Split-Path -Parent $R.ConfigPath
+            $ob = New-OzButton -Text (T 'OPEN SETTINGS FOLDER') -Style 'NeonViolet' -Tag $folder -Margin '0,4,0,14'
+            $ob.HorizontalAlignment = 'Left'
+            $ob.Add_Click({ Open-OzLink ([string]$this.Tag) })
+            [void]$details.Children.Add($ob)
+        }
+    }
+
+    # ---- what to set in the game menu ----
+    [void]$details.Children.Add((New-OzText -Text ((T 'SET IN THE GAME MENU') + '   //   ' + $g.MenuPath) -Size 10.5 -Color '#5D6E92' -Display -Bold -Margin '0,0,0,6'))
+    $menu = New-Object System.Windows.Controls.Primitives.UniformGrid
+    $menu.Columns = 2
+    $menu.Margin = New-OzThickness '0,0,0,12'
+    foreach ($m in $g.Menu) {
+        $line = New-OzColumns @('*', 'Auto')
+        $line.Margin = New-OzThickness '0,2,24,2'
+        Add-OzGridChild $line (New-OzText -Text $m[0] -Size 12.5 -Color '#8A9BBF') 0
+        Add-OzGridChild $line (New-OzText -Text $m[1] -Size 12.5 -Color '#E6F1FF' -Semi -Margin '12,0,0,0') 1
+        [void]$menu.Children.Add($line)
+    }
+    [void]$details.Children.Add($menu)
+
+    # ---- launch options ----
+    [void]$details.Children.Add((New-OzText -Text (T 'LAUNCH OPTIONS') -Size 10.5 -Color '#5D6E92' -Display -Bold -Margin '0,0,0,6'))
+    foreach ($a in $g.LaunchArgs) {
+        $row = New-OzRowBorder -Margin '0,0,0,6' -Padding '12,8,12,8'
+        $cols = New-OzColumns @('*', 'Auto')
+        $left = New-Object System.Windows.Controls.StackPanel
+        $lh = New-Object System.Windows.Controls.StackPanel
+        $lh.Orientation = 'Horizontal'
+        [void]$lh.Children.Add((New-OzText -Text $a.Label -Size 12 -Color '#8A9BBF'))
+        if ($a.Rec) { [void]$lh.Children.Add((New-OzBadge -Text (T 'RECOMMENDED') -Color '#00E5FF')) }
+        [void]$left.Children.Add($lh)
+        $box = New-Object System.Windows.Controls.TextBox
+        $box.Text = $a.Args
+        $box.IsReadOnly = $true
+        $box.Background = Get-OzBrush '#00000000'
+        $box.BorderThickness = New-OzThickness '0'
+        $box.Foreground = Get-OzBrush '#9FE9FF'
+        $box.FontFamily = $Oz.Window.FindResource('Mono')
+        $box.FontSize = 13.5
+        $box.Margin = New-OzThickness '0,3,0,0'
+        [void]$left.Children.Add($box)
+        Add-OzGridChild $cols $left 0
+        $cb = New-OzButton -Text (T 'COPY') -Style 'Neon' -Tag $a.Args -Margin '0'
+        $cb.VerticalAlignment = 'Center'
+        $cb.Add_Click({
+                try { [System.Windows.Clipboard]::SetText([string]$this.Tag); Write-OzLog (T 'Copied: {0}' ([string]$this.Tag)) 'OK' }
+                catch { Write-OzLog (T 'Could not copy. Select the text and press Ctrl+C.') 'WARN' }
+            })
+        Add-OzGridChild $cols $cb 1
+        $row.Child = $cols
+        [void]$details.Children.Add($row)
+    }
+    if ($g.LaunchArgs.Count) {
+        $launchers = if ($R.Installed -and $g.Launchers -contains $R.Launcher) { @($R.Launcher) } else { @($g.Launchers) }
+        foreach ($l in $launchers) {
+            if ($g.LaunchWhere[$l]) { [void]$details.Children.Add((New-OzText -Text (($g.LaunchWhere[$l]) -f $g.Name) -Size 12 -Color '#E6F1FF' -Mono -Wrap -Margin '0,4,0,0')) }
+        }
+    }
+    [void]$details.Children.Add((New-OzText -Text $g.LaunchNote -Size 12.5 -Wrap -Margin '0,6,0,0'))
+
+    [void]$sp.Children.Add($details)
+    $card.Child = $sp
+    $card
 }
 #endregion
 
@@ -7108,9 +8031,18 @@ function Initialize-OzEvents {
     $ui.LangEn.Add_Checked({ if ($Oz.Lang -ne 'en') { Set-OzLanguage 'en' -Save } })
     $ui.LangEs.Add_Checked({ if ($Oz.Lang -ne 'es') { Set-OzLanguage 'es' -Save } })
     $win.Add_StateChanged({ $Oz.UI.RootBorder.BorderThickness = New-OzThickness $(if ($Oz.Window.WindowState -eq 'Maximized') { '7' } else { '1' }) })
+    $win.Add_SizeChanged({ Update-OzCompactLayout })
+    $win.Add_PreviewKeyDown({
+            $ctrl = ([System.Windows.Input.Keyboard]::Modifiers -band [System.Windows.Input.ModifierKeys]::Control) -ne 0
+            if ($ctrl -and $_.Key -eq [System.Windows.Input.Key]::F) { Invoke-OzSearchShortcut; $_.Handled = $true }
+            elseif ($_.Key -eq [System.Windows.Input.Key]::Escape -and $Oz.UI.TweakSearch.IsKeyboardFocusWithin -and $Oz.UI.TweakSearch.Text) {
+                $Oz.UI.TweakSearch.Text = ''
+                $_.Handled = $true
+            }
+        })
 
     # navigation
-    foreach ($p in 'Dash', 'Tweaks', 'Profiles', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log') {
+    foreach ($p in 'Dash', 'Tweaks', 'Profiles', 'Games', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log') {
         $nav = $ui["Nav$p"]
         $nav.Add_Checked({ Show-OzPage ($this.Name -replace '^Nav', '') })
     }
@@ -7127,8 +8059,8 @@ function Initialize-OzEvents {
                 $ids = Resolve-OzProfile $p
                 $new = @($ids | Where-Object { $Oz.Rows[$_] -and $Oz.Rows[$_].Applicable -and -not $Oz.Rows[$_].Applied }).Count
                 if (-not $new) { Write-OzLog (T 'This PC is already fully tuned. Nothing to change.') 'OK'; return }
-                $msg = T "AUTO-TUNE found {0} improvement(s) for this {1} ({2}).`n`nYES  = apply them now (restore point first)`nNO   = show me the list first`nCANCEL = do nothing" $new (T $Oz.Sys.Form).ToLower() (T $Oz.Sys.Score.TierName)
-                $r = [System.Windows.MessageBox]::Show($msg, $Oz.AppName, 'YesNoCancel', 'Question')
+                $msg = T "AUTO-TUNE found {0} improvement(s) for this {1} ({2}).`n`nApply them now (a restore point is made first), or look at the list first?" $new (T $Oz.Sys.Form).ToLower() (T $Oz.Sys.Score.TierName)
+                $r = Show-OzDialog -Text $msg -Buttons YesNoCancel -Kind Question -Labels @((T 'APPLY NOW'), (T 'SHOW ME FIRST'), (T 'CANCEL'))
                 if ($r -eq 'Yes') { Invoke-OzProfile 'auto'; Invoke-OzApplyPending }
                 elseif ($r -eq 'No') { Invoke-OzProfile 'auto' }
             }
@@ -7160,6 +8092,9 @@ function Initialize-OzEvents {
             }
         })
 
+    # games
+    $ui.BtnScanGames.Add_Click({ Invoke-OzSafe 'Game scan' { $Oz.GamesShown = $true; Show-OzGames (Get-OzGameScan) } })
+
     # debloat
     $ui.BtnScanApps.Add_Click({ Invoke-OzSafe 'App scan' { $Oz.BloatChecks = @(); Show-OzBloat (Get-OzInstalledBloat) } })
     $ui.BtnBloatRec.Add_Click({ foreach ($c in @($Oz.BloatChecks)) { $c.IsChecked = [bool]$c.Tag.Rec } })
@@ -7169,7 +8104,7 @@ function Initialize-OzEvents {
                 $sel = @($Oz.BloatChecks | Where-Object { $_.IsChecked } | ForEach-Object { $_.Tag })
                 if (-not $sel.Count) { Write-OzLog (T 'Select at least one app.') 'WARN'; return }
                 $msg = T "Remove these {0} app(s) for all users?`n`n{1}`n`nYou can reinstall them from the Microsoft Store." $sel.Count (($sel | ForEach-Object { '  - ' + (T $_.Name) }) -join "`n")
-                if ([System.Windows.MessageBox]::Show($msg, $Oz.AppName, 'YesNo', 'Warning') -ne 'Yes') { return }
+                if ((Show-OzDialog -Text $msg -Buttons YesNo -Kind Warning) -ne 'Yes') { return }
                 Remove-OzBloat -Patterns @($sel | ForEach-Object { $_.Pattern })
                 $Oz.BloatChecks = @()
                 Show-OzBloat (Get-OzInstalledBloat)
@@ -7177,7 +8112,7 @@ function Initialize-OzEvents {
         })
     $ui.BtnEdgeUninstall.Add_Click({
             $msg = T "Try Microsoft's official Edge uninstall through winget?`n`nThis only works where Microsoft allows it (European Economic Area). WebView2, which other apps need, stays installed."
-            if ([System.Windows.MessageBox]::Show($msg, $Oz.AppName, 'YesNo', 'Warning') -eq 'Yes') {
+            if ((Show-OzDialog -Text $msg -Buttons YesNo -Kind Warning) -eq 'Yes') {
                 Start-OzConsole 'Edge uninstall' 'winget uninstall --id Microsoft.Edge -e --accept-source-agreements'
             }
         })
@@ -7200,7 +8135,7 @@ function Initialize-OzEvents {
     $ui.BtnChkdsk.Add_Click({ Start-OzConsole 'Ozzyhn - Scan disk' "chkdsk $env:SystemDrive /scan" })
     $ui.BtnNetReset.Add_Click({
             Invoke-OzSafe 'Network reset' {
-                if ([System.Windows.MessageBox]::Show((T "Reset Winsock, TCP/IP and the DNS cache?`n`nUse this when internet is broken or slow for no reason. A restart is required after."), $Oz.AppName, 'YesNo', 'Question') -ne 'Yes') { return }
+                if ((Show-OzDialog -Text (T "Reset Winsock, TCP/IP and the DNS cache?`n`nUse this when internet is broken or slow for no reason. A restart is required after.") -Buttons YesNo -Kind Question) -ne 'Yes') { return }
                 Invoke-OzJob -Activity (T 'Resetting network stack...') -ScriptBlock {
                     ipconfig /flushdns | Out-Null; T 'DNS cache flushed'
                     netsh winsock reset | Out-Null; T 'Winsock reset'
@@ -7222,7 +8157,7 @@ function Initialize-OzEvents {
     $ui.BtnPlanCool.Add_Click({ Invoke-OzSafe 'Plan' { Set-OzPlanTweak 'plan-cool' } })
     $ui.BtnPlanReset.Add_Click({
             Invoke-OzSafe 'Reset plans' {
-                if ([System.Windows.MessageBox]::Show((T 'Restore the Windows default power plans? Custom plans (including Ozzyhn ones) are removed.'), $Oz.AppName, 'YesNo', 'Warning') -ne 'Yes') { return }
+                if ((Show-OzDialog -Text (T 'Restore the Windows default power plans? Custom plans (including Ozzyhn ones) are removed.') -Buttons YesNo -Kind Warning) -ne 'Yes') { return }
                 Invoke-OzPowercfg @('-restoredefaultschemes') | Out-Null
                 $j = Read-OzJournal
                 foreach ($id in 'plan-perf', 'plan-smart', 'plan-cool') { if ($j.ContainsKey($id)) { $j.Remove($id) } }
@@ -7335,6 +8270,7 @@ function Invoke-OzScan {
     Start-OzLive
     $Oz.LiveWanted = ($Oz.UI.PageDash.Visibility -eq 'Visible')
     Set-OzBusy $false
+    if ($Oz.UI.PageGames.Visibility -eq 'Visible' -and -not $Oz.GamesShown) { $Oz.GamesShown = $true; Show-OzGames (Get-OzGameScan) }
 
     $rows = @($Oz.Rows.Values)
     $active = @($rows | Where-Object { $_.Applicable -and $_.Applied }).Count
@@ -7345,6 +8281,67 @@ function Invoke-OzScan {
     if ($legacy) { Write-OzLog (T 'This update fixes a v1.0 bug: {0} tweak(s) you applied before were never really written. Press RE-APPLY in TWEAKS to apply them properly.' $legacy) 'WARN' }
     elseif ($undone.Count) { Write-OzLog (T 'Applied before but OFF now (see NEEDS ATTENTION in TWEAKS): {0}' ($undone -join ', ')) 'WARN' }
     Write-OzLog (T 'Ready. {0} tweaks loaded, {1} already active on this PC.' $Oz.Tweaks.Count $active) 'OK'
+}
+
+function Initialize-OzWindow {
+    # Builds the main window and wires every control. Used by Start-Ozzyhn and by the CI UI test,
+    # so the test opens exactly the window users get.
+    Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+    $Oz.Window = [Windows.Markup.XamlReader]::Parse($Oz.Xaml)
+    foreach ($m in [regex]::Matches($Oz.Xaml, 'x:Name="(\w+)"')) {
+        $n = $m.Groups[1].Value
+        $el = $Oz.Window.FindName($n)
+        if ($el) { $Oz.UI[$n] = $el }
+    }
+    $Oz.UI.VersionText.Text = 'v' + $Oz.Version
+    $Oz.UI.FooterText.Text = '{0}  |  PowerShell {1}' -f $env:COMPUTERNAME, $PSVersionTable.PSVersion
+    Set-OzWindowFit
+    Set-OzWindowIcon
+    Register-OzXamlTexts
+    Set-OzLanguage $Oz.Lang
+    Initialize-OzEvents
+    $Oz.Timer.Start()
+}
+
+function Set-OzWindowFit {
+    # Cheap laptops are often 1366x768 at 125% scaling, which leaves about 1093x580 to work with.
+    # Fit the window to the screen instead of opening it with the bottom cut off.
+    $w = $Oz.Window
+    try {
+        $wa = [System.Windows.SystemParameters]::WorkArea
+        $maxW = [math]::Max(800, $wa.Width - 16)
+        $maxH = [math]::Max(500, $wa.Height - 16)
+        if ($w.MinWidth -gt $maxW) { $w.MinWidth = $maxW }
+        if ($w.MinHeight -gt $maxH) { $w.MinHeight = $maxH }
+        if ($w.Width -gt $maxW) { $w.Width = $maxW }
+        if ($w.Height -gt $maxH) { $w.Height = $maxH }
+    } catch { }
+}
+
+function Update-OzCompactLayout {
+    # On short screens the two cards at the bottom of the menu are hidden so every page button fits
+    $h = $Oz.Window.ActualHeight
+    if ($h -le 0) { return }
+    $v = if ($h -lt 760) { 'Collapsed' } else { 'Visible' }
+    foreach ($n in 'NavProfileCard', 'NavActiveCard') {
+        if ($Oz.UI[$n] -and $Oz.UI[$n].Visibility -ne $v) { $Oz.UI[$n].Visibility = $v }
+    }
+}
+
+function Set-OzConsoleWindow {
+    # Minimizes or restores the PowerShell console behind the app. Does nothing where Windows
+    # does not allow it (some terminal hosts).
+    param([ValidateSet('Minimize', 'Restore')][string]$State)
+    try {
+        if (-not ('OzNative.ConsoleWindow' -as [type])) {
+            Add-Type -Namespace OzNative -Name ConsoleWindow -ErrorAction Stop -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
+'@
+        }
+        $h = [OzNative.ConsoleWindow]::GetConsoleWindow()
+        if ($h -ne [IntPtr]::Zero) { [void][OzNative.ConsoleWindow]::ShowWindow($h, $(if ($State -eq 'Minimize') { 6 } else { 9 })) }
+    } catch { }
 }
 
 function Start-Ozzyhn {
@@ -7400,26 +8397,17 @@ function Start-Ozzyhn {
     Write-Host ''
 
     try {
-        Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
-        $Oz.Window = [Windows.Markup.XamlReader]::Parse($Oz.Xaml)
-        foreach ($m in [regex]::Matches($Oz.Xaml, 'x:Name="(\w+)"')) {
-            $n = $m.Groups[1].Value
-            $el = $Oz.Window.FindName($n)
-            if ($el) { $Oz.UI[$n] = $el }
-        }
-        $Oz.UI.VersionText.Text = 'v' + $Oz.Version
-        $Oz.UI.FooterText.Text = '{0}  |  PowerShell {1}' -f $env:COMPUTERNAME, $PSVersionTable.PSVersion
-        Set-OzWindowIcon
-        Register-OzXamlTexts
-        Set-OzLanguage $Oz.Lang
+        Initialize-OzWindow
         Write-OzLog ('{0} v{1} ({2}) started. Data folder: {3}' -f $Oz.AppName, $Oz.Version, $Oz.Brand, $Oz.DataDir) 'STEP'
         Write-OzDataDirNote
-        Initialize-OzEvents
-        $Oz.Timer.Start()
+        # The console stays open behind the app (closing it closes the app), so tuck it away
+        $Oz.Window.Add_Loaded({ Set-OzConsoleWindow 'Minimize' })
         [void]$Oz.Window.ShowDialog()
         $Oz.Closing = $true
+        Set-OzConsoleWindow 'Restore'
         if ($Oz.Pool) { try { $Oz.Pool.Close() } catch { } }
     } catch {
+        Set-OzConsoleWindow 'Restore'
         Write-Host ''
         Write-Host ('Startup error: {0}' -f $_.Exception.Message) -ForegroundColor Red
         Write-Host $_.ScriptStackTrace -ForegroundColor DarkGray
