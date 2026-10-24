@@ -178,7 +178,7 @@ function Protect-OzDataDir {
     # renamed and kept. The new folder is created already locked. The undo journal and settings
     # are carried over only if an administrator made the old folder and wrote those files.
     $dir = $Oz.DataDir
-    if (Test-OzAdminOnly $dir) { return $true }
+    if ((Test-Path -LiteralPath $dir -PathType Container) -and (Test-OzAdminOnly $dir)) { return $true }
     try {
         $old = $null; $carry = $false
         if ([IO.Directory]::Exists($dir) -or [IO.File]::Exists($dir)) {
