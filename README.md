@@ -56,6 +56,7 @@ Then start the file you checked from PowerShell as Administrator: `powershell -E
 |---|---|
 | **Dashboard** | CPU-Z-style spec sheet (CPU, cores and cache, GPU and VRAM, RAM type, speed and channels, drives, board, BIOS, battery wear, VBS/HVCI, Secure Boot, TPM). Live CPU load, real clock speed, RAM, temperature and uptime. **OZ Score** and tier: **CHEAP / BUDGET / MID-RANGE / FANCY**. Smart insights such as an HDD system drive, single-channel RAM, XMP probably off, old GPU driver, too many startup apps, or a hot laptop. |
 | **Tweaks** | **129 tweaks in 14 categories**. Each one detects its own state, so the switches show what is actually active. Flip what you want, then apply. Search, filters, *Recommended for this PC* badges and risk labels (Safe, Moderate, Advanced, Danger). |
+| **Games** | Apex Legends, Fortnite, Counter-Strike 2, VALORANT, Overwatch 2 and Rainbow Six Siege X. Finds each game and its launcher, shows its icon, reads its own video settings file and shows what to change, lists the competitive menu settings for *this* PC and gives the launch options to copy for Steam, EA app or Epic. Game files are never changed. |
 | **Profiles** | One click, resolved for this PC: **Auto-Tune**, **Revive Cheap PC**, **Max Performance**, **Cool & Quiet**, **Competitive Gaming**, **Privacy Max**, **Clean Windows UI**. *Preview* stages the changes for review; *Apply* does it now. |
 | **Debloat** | Lists only the bloat that is actually installed (66 known packages), with recommended ones pre-selected. Core apps (Store, Calculator, Notepad, Terminal, Security) are protected and never shown. Also includes the official Edge uninstall where Microsoft allows it. |
 | **Drivers** | Official download links for the detected NVIDIA / AMD / Intel GPU, the chipset, the laptop or board maker and the network adapter. It also lists devices with missing drivers and the age of key drivers, and links to NVCleanstall and DDU for clean GPU installs. |
@@ -106,7 +107,7 @@ Undervolting and BIOS settings (XMP / EXPO, fan curves) cannot be changed safely
 
 ## What's new
 
-**1.1.2:** the double-click launcher always runs the newest release, and every tweak is tested on real Windows (apply, check, revert, check) before each release. **1.1.1:** security fix for the data folder, and launching from Releases. Full history in [CHANGELOG.md](CHANGELOG.md).
+**1.2.0:** new **Games** page (competitive settings, settings-file check and launch options for six shooters), the window fits small laptop screens, neon pop-ups, a results card after applying, and Ctrl+F search. **1.1.2:** the double-click launcher always runs the newest release, and every tweak is tested on real Windows (apply, check, revert, check) before each release. **1.1.1:** security fix for the data folder, and launching from Releases. Full history in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -119,6 +120,8 @@ Everything is in one file, `ozzyhn.ps1`. The logo and profile picture are in `/a
 ## En español
 
 **Optimizaciones de Ozzyhn** (por **OZZYHN TWEAKS**) analiza tu PC (CPU, GPU, RAM, disco, placa y batería) y detecta si es de escritorio o portátil, si usa Windows 10 u 11 y si es una PC **barata, económica, de gama media o de gama alta**. Luego la optimiza según ese resultado. Cada interruptor muestra el estado real de Windows y todo se puede deshacer. La app está **en español y en inglés**: cambia con el botón **EN | ES** de la barra de título.
+
+La página **Juegos** revisa Apex Legends, Fortnite, Counter-Strike 2, VALORANT, Overwatch 2 y Rainbow Six Siege X: detecta el juego y su launcher, lee su archivo de ajustes de video para decirte qué cambiar, muestra los ajustes competitivos para tu PC y te da las opciones de lanzamiento para copiar. Nunca modifica los archivos de tus juegos.
 
 Ábrelo en **PowerShell como administrador**:
 

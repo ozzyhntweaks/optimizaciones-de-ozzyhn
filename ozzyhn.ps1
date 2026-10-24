@@ -26,7 +26,7 @@
 
 #region ============================ STATE ============================
 $Oz = [hashtable]::Synchronized(@{})
-$Oz.Version   = '1.1.2'
+$Oz.Version   = '1.2.0'
 $Oz.AppName   = 'Optimizaciones de Ozzyhn'
 $Oz.Brand     = 'OZZYHN TWEAKS'
 $Oz.RepoOwner = 'ozzyhntweaks'
@@ -5629,7 +5629,7 @@ $Oz.Xaml = @'
                             <Run Text="OPTIMIZACIONES" Foreground="#E6F1FF"/><Run Text=" DE " Foreground="#5D6E92"/><Run Text="OZZYHN" Foreground="#00E5FF"/>
                         </TextBlock>
                         <Border Margin="12,0,0,0" CornerRadius="9" Padding="8,2" BorderBrush="#558A5CFF" BorderThickness="1" VerticalAlignment="Center">
-                            <TextBlock x:Name="VersionText" Text="v1.1.2" FontSize="10.5" Foreground="#B79BFF" FontFamily="{StaticResource Mono}"/>
+                            <TextBlock x:Name="VersionText" Text="v1.2.0" FontSize="10.5" Foreground="#B79BFF" FontFamily="{StaticResource Mono}"/>
                         </Border>
                         <TextBlock Text="//  OZZYHN TWEAKS" Margin="12,0,0,0" VerticalAlignment="Center" FontFamily="{StaticResource Display}" FontSize="11.5" FontWeight="Bold" Foreground="{StaticResource NeonGrad}"/>
                     </StackPanel>

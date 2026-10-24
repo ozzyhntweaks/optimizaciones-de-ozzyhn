@@ -22,6 +22,7 @@ Each release is published by GitHub Actions when the version number changes ([re
 * Download or run other programs or scripts from the internet.
 * Add antivirus exclusions.
 * Disable Windows Update.
+* Change game files. The Games page only reads each game's settings file to show what to change; you change settings in the game's own menu.
 * Turn off Defender real-time protection, SmartScreen, Memory Integrity, VBS or CPU mitigations, unless you pick that Danger Zone switch yourself and confirm it. Danger Zone switches are never part of a profile.
 
 Every push and every release runs [check-script.ps1](.github/scripts/check-script.ps1), which fails if the script gains a download command, `Invoke-Expression`, a Defender exclusion, non-ASCII characters or a PSScriptAnalyzer security finding. [test-datadir.ps1](.github/scripts/test-datadir.ps1) checks on a real Windows machine that the data folder (`C:\ProgramData\Ozzyhn`) stays locked to administrators.
