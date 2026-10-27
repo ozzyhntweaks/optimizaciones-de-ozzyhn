@@ -31,6 +31,10 @@ jobs:
         shell: powershell
         run: .\.github\scripts\test-tweaks.ps1 -Path ozzyhn.ps1
 
+      - name: Quick clean stays inside its folders (no links, no other drives)
+        shell: powershell
+        run: .\.github\scripts\test-cleanup.ps1 -Path ozzyhn.ps1
+
       - name: Games page reads settings files correctly
         shell: powershell
         run: .\.github\scripts\test-games.ps1 -Path ozzyhn.ps1

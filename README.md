@@ -101,13 +101,15 @@ Undervolting and BIOS settings (XMP / EXPO, fan curves) cannot be changed safely
 
 **Why is my temperature "N/A"?** Many motherboards hide their sensors from Windows. Use HWiNFO for exact readings. Everything else still works.
 
+**Does Quick clean touch my other drives?** No. It only cleans Windows cache folders on the Windows drive (usually C:), never follows links, and only empties that drive's Recycle Bin. Your own files are never part of it.
+
 **Does it work in Spanish (or any language) Windows?** Yes. All detection is language-independent.
 
 ---
 
 ## What's new
 
-**1.2.0:** new **Games** page (competitive settings, settings-file check and launch options for six shooters), the window fits small laptop screens, neon pop-ups, a results card after applying, and Ctrl+F search. **1.1.2:** the double-click launcher always runs the newest release, and every tweak is tested on real Windows (apply, check, revert, check) before each release. **1.1.1:** security fix for the data folder, and launching from Releases. Full history in [CHANGELOG.md](CHANGELOG.md).
+**1.2.1:** important fix: **Quick clean** no longer follows links to other drives, only empties the Windows drive's Recycle Bin, and asks before it starts. **1.2.0:** new **Games** page (competitive settings, settings-file check and launch options for six shooters), the window fits small laptop screens, neon pop-ups, a results card after applying, and Ctrl+F search. **1.1.2:** the double-click launcher always runs the newest release, and every tweak is tested on real Windows (apply, check, revert, check) before each release. **1.1.1:** security fix for the data folder, and launching from Releases. Full history in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

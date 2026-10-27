@@ -26,7 +26,7 @@
 
 #region ============================ STATE ============================
 $Oz = [hashtable]::Synchronized(@{})
-$Oz.Version   = '1.2.0'
+$Oz.Version   = '1.2.1'
 $Oz.AppName   = 'Optimizaciones de Ozzyhn'
 $Oz.Brand     = 'OZZYHN TWEAKS'
 $Oz.RepoOwner = 'ozzyhntweaks'
@@ -2457,44 +2457,158 @@ $Oz.Bloat = @(
 #endregion
 
 #region ============================ CLEANUP ============================
+# Quick clean empties a fixed list of Windows cache folders on the Windows drive, and nothing else.
+# Up to 1.2.0 it emptied each folder with Remove-Item -Recurse and trusted TEMP / TMP as they were.
+# Windows PowerShell 5.1 can follow a junction or symbolic link inside the folder and delete what
+# it points to, on any drive, and a TEMP pointing at another drive was emptied whole. It also
+# emptied the Recycle Bin of every drive. Now:
+#   - every folder is checked first (Test-OzCleanPath): on the Windows drive, not a drive root,
+#     the expected Windows folder, not holding a personal or system folder, and no link on the way;
+#   - links found inside are skipped: never followed and never deleted (Clear-OzFolder);
+#   - only the Recycle Bin of the Windows drive is emptied.
+
+function Get-OzWindowsDrive {
+    # 'C:' for the drive Windows runs from
+    $root = ''
+    try { $root = [IO.Path]::GetPathRoot([Environment]::GetFolderPath('Windows')) } catch { }
+    if (-not $root) { $root = [string]$env:SystemDrive }
+    $root.TrimEnd('\').ToUpperInvariant()
+}
+
+function Get-OzCleanProtected {
+    # Folders Quick clean must never empty, and never empty a folder that holds one of them
+    $list = New-Object System.Collections.Generic.List[string]
+    foreach ($v in @($env:SystemRoot, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramW6432, $env:ProgramData,
+            $env:PUBLIC, $env:USERPROFILE, $env:APPDATA, $env:LOCALAPPDATA, $env:OneDrive)) {
+        if ($v) { $list.Add($v) }
+    }
+    if ($env:USERPROFILE) { $list.Add((Split-Path -Parent $env:USERPROFILE)) }
+    foreach ($f in 'Desktop', 'MyDocuments', 'MyPictures', 'MyMusic', 'MyVideos', 'Favorites', 'System', 'SystemX86') {
+        try { $p = [Environment]::GetFolderPath($f); if ($p) { $list.Add($p) } } catch { }
+    }
+    # Downloads and the newer library folders only live in the registry
+    $usf = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders'
+    foreach ($n in '{374DE290-123F-4565-9164-39C4925E467B}', '{7D83EE9B-2244-4E70-B1F5-5393042AF1E4}', '{F42EE2D3-909F-4907-8871-4C22FC0BF756}',
+        '{0DDD015D-B06C-45D5-8C4C-F59713854639}', '{35286A68-3C57-41A1-BBB1-0EAE73D76C95}', '{A0C69A99-21C8-4671-8703-7934162FCF1D}') {
+        try {
+            $v = (Get-ItemProperty -LiteralPath $usf -Name $n -ErrorAction Stop).$n
+            if ($v) { $list.Add([Environment]::ExpandEnvironmentVariables([string]$v)) }
+        } catch { }
+    }
+    $list.ToArray()
+}
+
+function Test-OzCleanPath {
+    # Returns '' when Quick clean may empty $Path, otherwise the reason it must not.
+    # $Tail is a regex for how the full path must end, e.g. '\\Temp$'.
+    param([string]$Path, [string]$Tail)
+    if (-not $Path -or $Path -notmatch '^[A-Za-z]:\\') { return 'not a full path' }
+    try { $full = [IO.Path]::GetFullPath($Path).TrimEnd('\') } catch { return 'not a valid path' }
+    $root = [IO.Path]::GetPathRoot($full).TrimEnd('\')
+    if ($root -ne (Get-OzWindowsDrive)) { return 'not on the Windows drive' }
+    if ($full.Length -le $root.Length) { return 'a whole drive' }
+    if (-not $Tail -or $full -notmatch $Tail) { return 'not the expected Windows folder' }
+    foreach ($p in @(Get-OzCleanProtected)) {
+        try { $pf = [IO.Path]::GetFullPath($p).TrimEnd('\') } catch { continue }
+        if ($pf -eq $full -or $pf.StartsWith($full + '\', [StringComparison]::OrdinalIgnoreCase)) { return 'it holds personal or system files' }
+    }
+    # A junction or symbolic link anywhere on the way means the real folder could be on another drive
+    for ($d = $full; $d -and $d.Length -gt $root.Length; $d = [IO.Path]::GetDirectoryName($d)) {
+        try {
+            if (([IO.Directory]::Exists($d) -or [IO.File]::Exists($d)) -and ([IO.File]::GetAttributes($d) -band [IO.FileAttributes]::ReparsePoint)) {
+                return 'it is a link to another place'
+            }
+        } catch { return 'it could not be checked' }
+    }
+    ''
+}
+
+function Clear-OzFolder {
+    # Deletes the files inside $Path ($Filter applies to the top level only) and the subfolders left
+    # empty. Junctions and symbolic links are skipped, never followed and never deleted, so nothing
+    # outside $Path can be reached. Files in use stay. Returns the bytes freed.
+    param([string]$Path, [string]$Filter = '*')
+    $freed = [int64]0
+    if (-not $Path -or -not [IO.Directory]::Exists($Path)) { return $freed }
+    $link = [IO.FileAttributes]::ReparsePoint
+    $top = New-Object IO.DirectoryInfo $Path
+    if ($top.Attributes -band $link) { return $freed }
+    $dirs = New-Object System.Collections.Generic.List[object]
+    $todo = New-Object System.Collections.Generic.Stack[object]
+    $todo.Push(@($top, $Filter))
+    while ($todo.Count) {
+        $cur = $todo.Pop()
+        $dir = $cur[0]
+        # Checked again right before reading it, in case it was swapped for a link meanwhile
+        try { $dir.Refresh(); if ($dir.Attributes -band $link) { continue } } catch { continue }
+        $items = @()
+        try { $items = @($dir.GetFileSystemInfos($cur[1])) } catch { continue }
+        foreach ($i in $items) {
+            if ($i.Attributes -band $link) { continue }
+            if ($i -is [IO.DirectoryInfo]) { $dirs.Add($i); $todo.Push(@($i, '*')); continue }
+            try {
+                $len = $i.Length
+                if ($i.Attributes -band [IO.FileAttributes]::ReadOnly) { $i.Attributes = [IO.FileAttributes]::Normal }
+                $i.Delete()
+                $freed += $len
+            } catch { }
+        }
+    }
+    # Deepest first; a folder that still has something in it is kept
+    for ($n = $dirs.Count - 1; $n -ge 0; $n--) {
+        try { $dirs[$n].Refresh(); if (-not ($dirs[$n].Attributes -band $link)) { $dirs[$n].Delete($false) } } catch { }
+    }
+    $freed
+}
+
+function Get-OzCleanTarget {
+    # The only folders Quick clean empties. Tail: how the full path must end (checked by Test-OzCleanPath).
+    $list = New-Object System.Collections.Generic.List[object]
+    $seen = @{}
+    foreach ($p in @($env:TEMP, $env:TMP)) {
+        if (-not $p) { continue }
+        $k = $p.TrimEnd('\').ToUpperInvariant()
+        if ($seen.ContainsKey($k)) { continue }
+        $seen[$k] = $true
+        # ...\Temp, or ...\Temp\2 in a Remote Desktop session
+        $list.Add([pscustomobject]@{ Path = $p; Label = 'Your temp folder'; Tail = '\\Temp(\\\d+)?$'; Filter = '*'; Services = @() })
+    }
+    $win = $env:SystemRoot
+    $more = @(
+        @("$win\Temp", 'Windows temp', '\\Temp$', '*', @()),
+        @("$env:LOCALAPPDATA\CrashDumps", 'Crash dumps', '\\CrashDumps$', '*', @()),
+        @("$env:ProgramData\Microsoft\Windows\WER\ReportArchive", 'Error reports (archive)', '\\WER\\ReportArchive$', '*', @()),
+        @("$env:ProgramData\Microsoft\Windows\WER\ReportQueue", 'Error reports (queue)', '\\WER\\ReportQueue$', '*', @()),
+        @("$env:LOCALAPPDATA\Microsoft\Windows\INetCache", 'Legacy web cache', '\\Microsoft\\Windows\\INetCache$', '*', @()),
+        @("$win\Logs\CBS", 'Servicing logs', '\\Logs\\CBS$', '*', @()),
+        @("$env:LOCALAPPDATA\Microsoft\Windows\Explorer", 'Thumbnail cache', '\\Microsoft\\Windows\\Explorer$', 'thumbcache_*.db', @()),
+        @("$win\SoftwareDistribution\Download", 'Windows Update downloads', '\\SoftwareDistribution\\Download$', '*', @('wuauserv', 'bits'))
+    )
+    foreach ($m in $more) { $list.Add([pscustomobject]@{ Path = $m[0]; Label = $m[1]; Tail = $m[2]; Filter = $m[3]; Services = $m[4] }) }
+    $list.ToArray()
+}
+
 function Invoke-OzQuickClean {
     $res = Invoke-OzJob -Activity (T 'Cleaning temporary files...') -ScriptBlock {
-        function Get-Size($p) {
-            try { [int64](Get-ChildItem -LiteralPath $p -Recurse -Force -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum } catch { 0 }
-        }
-        function Clear-Folder($p, $filter = '*') {
-            if (-not (Test-Path -LiteralPath $p)) { return 0 }
-            $before = Get-Size $p
-            Get-ChildItem -LiteralPath $p -Force -Filter $filter -ErrorAction SilentlyContinue |
-                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-            [math]::Max(0, $before - (Get-Size $p))
-        }
         $total = [int64]0
-        $targets = @(
-            @("$env:TEMP", 'Your temp folder'),
-            @("$env:SystemRoot\Temp", 'Windows temp'),
-            @("$env:LOCALAPPDATA\CrashDumps", 'Crash dumps'),
-            @("$env:ProgramData\Microsoft\Windows\WER\ReportArchive", 'Error reports (archive)'),
-            @("$env:ProgramData\Microsoft\Windows\WER\ReportQueue", 'Error reports (queue)'),
-            @("$env:LOCALAPPDATA\Microsoft\Windows\INetCache", 'Legacy web cache'),
-            @("$env:SystemRoot\Logs\CBS", 'Servicing logs')
-        )
-        foreach ($t in $targets) {
-            $freed = Clear-Folder $t[0]
+        foreach ($t in @(Get-OzCleanTarget)) {
+            $why = Test-OzCleanPath $t.Path $t.Tail
+            if ($why) { '  ' + (T '{0}: skipped ({1}): {2}' (T $t.Label) (T $why) $t.Path); continue }
+            $stop = @($t.Services).Count -gt 0
+            if ($stop) {
+                T 'Stopping Windows Update to clear its download cache...'
+                Stop-Service -Name $t.Services -Force -ErrorAction SilentlyContinue
+            }
+            $freed = [int64]0
+            try { $freed = Clear-OzFolder $t.Path $t.Filter } catch { }
+            finally { if ($stop) { Start-Service -Name $t.Services -ErrorAction SilentlyContinue } }
             $total += $freed
-            '  {0}: {1:N0} MB' -f (T $t[1]), ($freed / 1MB)
+            '  {0}: {1:N0} MB' -f (T $t.Label), ($freed / 1MB)
         }
-        $thumb = Clear-Folder "$env:LOCALAPPDATA\Microsoft\Windows\Explorer" 'thumbcache_*.db'
-        $total += $thumb
-        '  {0}: {1:N0} MB' -f (T 'Thumbnail cache'), ($thumb / 1MB)
-        T 'Stopping Windows Update to clear its download cache...'
-        Stop-Service -Name wuauserv, bits -Force -ErrorAction SilentlyContinue
-        $wu = Clear-Folder "$env:SystemRoot\SoftwareDistribution\Download"
-        Start-Service -Name wuauserv, bits -ErrorAction SilentlyContinue
-        $total += $wu
-        '  {0}: {1:N0} MB' -f (T 'Windows Update downloads'), ($wu / 1MB)
         try { Delete-DeliveryOptimizationCache -Force -ErrorAction Stop; '  ' + (T 'Delivery Optimization cache cleared') } catch { }
-        try { Clear-RecycleBin -Force -ErrorAction Stop; '  ' + (T 'Recycle Bin emptied') } catch { }
+        # Only the Windows drive. Other drives' Recycle Bins are left as they are.
+        $drive = Get-OzWindowsDrive
+        try { Clear-RecycleBin -DriveLetter $drive.Substring(0, 1) -Force -ErrorAction Stop; '  ' + (T 'Recycle Bin of drive {0} emptied' $drive) } catch { }
         [pscustomobject]@{ FreedMB = [math]::Round($total / 1MB) }
     }
     $r = @($res) | Select-Object -First 1
@@ -2937,8 +3051,38 @@ Descargas de Windows Update
 Delivery Optimization cache cleared
 Cach&eacute; de Optimizaci&oacute;n de distribuci&oacute;n vaciada
 
-Recycle Bin emptied
-Papelera vaciada
+Recycle Bin of drive {0} emptied
+Papelera de la unidad {0} vaciada
+
+Delete temporary files and Windows caches on drive {0}, and empty its Recycle Bin?\n\nOnly Windows cache folders are cleaned. Your own files and your other drives are never touched.
+&iquest;Borrar los archivos temporales y las cach&eacute;s de Windows de la unidad {0} y vaciar su Papelera?\n\nSolo se limpian carpetas de cach&eacute; de Windows. Tus archivos y tus otras unidades nunca se tocan.
+
+{0}: skipped ({1}): {2}
+{0}: no se limpi&oacute; ({1}): {2}
+
+not a full path
+no es una ruta completa
+
+not a valid path
+no es una ruta v&aacute;lida
+
+not on the Windows drive
+no est&aacute; en la unidad de Windows
+
+a whole drive
+es una unidad completa
+
+not the expected Windows folder
+no es la carpeta de Windows esperada
+
+it holds personal or system files
+contiene archivos personales o del sistema
+
+it is a link to another place
+es un enlace a otro lugar
+
+it could not be checked
+no se pudo revisar
 
 Quick clean finished: {0:N0} MB freed.
 Limpieza r&aacute;pida terminada: {0:N0} MB liberados.
@@ -4776,8 +4920,8 @@ Limpieza, reparaci&oacute;n, DNS, energ&iacute;a, almacenamiento y control de in
 CLEANUP
 LIMPIEZA
 
-Temp files, crash dumps, error reports, thumbnail cache, Windows Update downloads, Delivery Optimization cache and the Recycle Bin.
-Archivos temporales, volcados de errores, informes de errores, cach&eacute; de miniaturas, descargas de Windows Update, cach&eacute; de Optimizaci&oacute;n de distribuci&oacute;n y la Papelera.
+Temp files, crash dumps, error reports, thumbnail cache, Windows Update downloads, Delivery Optimization cache and the Recycle Bin of the Windows drive. Other drives are never touched.
+Archivos temporales, volcados de errores, informes de errores, cach&eacute; de miniaturas, descargas de Windows Update, cach&eacute; de Optimizaci&oacute;n de distribuci&oacute;n y la Papelera de la unidad de Windows. Las dem&aacute;s unidades nunca se tocan.
 
 QUICK CLEAN
 LIMPIEZA R&Aacute;PIDA
@@ -5991,7 +6135,7 @@ $Oz.Xaml = @'
                                     <Border Style="{StaticResource Card}">
                                         <StackPanel>
                                             <TextBlock Text="CLEANUP" Style="{StaticResource H2}"/>
-                                            <TextBlock Style="{StaticResource Body}" Margin="0,4,0,12" Text="Temp files, crash dumps, error reports, thumbnail cache, Windows Update downloads, Delivery Optimization cache and the Recycle Bin."/>
+                                            <TextBlock Style="{StaticResource Body}" Margin="0,4,0,12" Text="Temp files, crash dumps, error reports, thumbnail cache, Windows Update downloads, Delivery Optimization cache and the Recycle Bin of the Windows drive. Other drives are never touched."/>
                                             <WrapPanel>
                                                 <Button x:Name="BtnQuickClean" Style="{StaticResource Neon}" Content="QUICK CLEAN" Margin="0,0,8,8"/>
                                                 <Button x:Name="BtnDeepClean" Style="{StaticResource NeonViolet}" Content="DEEP CLEAN (DISM)" Margin="0,0,8,8"/>
@@ -8132,7 +8276,13 @@ function Initialize-OzEvents {
         })
 
     # tools
-    $ui.BtnQuickClean.Add_Click({ Invoke-OzSafe 'Quick clean' { Invoke-OzQuickClean } })
+    $ui.BtnQuickClean.Add_Click({
+            Invoke-OzSafe 'Quick clean' {
+                $msg = T "Delete temporary files and Windows caches on drive {0}, and empty its Recycle Bin?`n`nOnly Windows cache folders are cleaned. Your own files and your other drives are never touched." (Get-OzWindowsDrive)
+                if ((Show-OzDialog -Text $msg -Buttons YesNo -Kind Question) -ne 'Yes') { return }
+                Invoke-OzQuickClean
+            }
+        })
     $ui.BtnDeepClean.Add_Click({ Start-OzConsole 'Ozzyhn - DISM component cleanup' 'dism /online /cleanup-image /startcomponentcleanup' })
     $ui.BtnCleanMgr.Add_Click({ Start-Process 'cleanmgr.exe' })
     $ui.BtnSfc.Add_Click({ Start-OzConsole 'Ozzyhn - Windows repair' 'dism /online /cleanup-image /restorehealth & sfc /scannow' })

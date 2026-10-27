@@ -2,6 +2,16 @@
 
 Each release on the [Releases page](https://github.com/ozzyhntweaks/optimizaciones-de-ozzyhn/releases) uses its section below as release notes. To release: add a section for the new version at the top, set `$Oz.Version` in `ozzyhn.ps1` to match, and push to `main`.
 
+## 1.2.1
+
+* **Important fix: QUICK CLEAN could delete files on other drives.** If a folder it cleans held a link (a junction or symbolic link) to a folder on another drive, Windows PowerShell followed the link and deleted the files at the other end. It also trusted the TEMP setting even when it pointed at another drive, and it emptied the Recycle Bin of every drive. Now:
+  * It only cleans a fixed list of Windows cache folders on the Windows drive (usually C:). Each folder is checked first. A whole drive, a folder that holds personal or system folders, or a folder that leads somewhere else through a link is skipped and named in the log.
+  * Links inside those folders are never followed and never deleted.
+  * Only the Recycle Bin of the Windows drive is emptied.
+  * QUICK CLEAN asks before it starts.
+* If files went missing after a QUICK CLEAN, stop saving anything to that drive and run a file recovery tool before new files overwrite them.
+* New automatic test on real Windows: it builds folders with junctions and links to "work" files, runs the cleanup, and blocks the release if anything outside the cleaned folder is touched.
+
 ## 1.2.0
 
 * **New GAMES page** for Apex Legends, Fortnite, Counter-Strike 2, VALORANT, Overwatch 2 and Rainbow Six Siege X:
