@@ -132,18 +132,28 @@ Set-OzCleanChecks -Recommended
 $recTicked = @($Oz.CleanChecks | Where-Object IsChecked)
 if (@($recTicked | Where-Object { -not $_.Tag.Rec }).Count) { Fail 'cleanup: SELECT RECOMMENDED ticked an item that is not recommended' }
 else { Pass "cleanup: SELECT NONE / SELECT RECOMMENDED ($($recTicked.Count) ticked): $($Oz.UI.CleanTotal.Text)" }
-Save-Shot 'tools-cleanup' $Oz.UI.PageTools
+Save-Shot 'tools-cleanup' $Oz.UI.CleanList.Parent
 Set-Size 1093 574
-Save-Shot 'laptop-tools-cleanup' $Oz.UI.PageTools
+Save-Shot 'laptop-tools-cleanup' $Oz.UI.CleanList.Parent
 Set-Size 1320 840
 Set-OzLanguage 'es'
 Wait-Ui 300
 if (@($Oz.CleanChecks).Count -ne $cleanCount) { Fail "cleanup: Spanish shows $(@($Oz.CleanChecks).Count) items instead of $cleanCount" }
 elseif ($Oz.UI.BtnCleanSelected.Content -ne 'LIMPIAR SELECCIONADOS') { Fail "cleanup: Spanish button says '$($Oz.UI.BtnCleanSelected.Content)'" }
 else { Pass 'cleanup: Spanish list and buttons' }
-Save-Shot 'es-tools-cleanup' $Oz.UI.PageTools
+Save-Shot 'es-tools-cleanup' $Oz.UI.CleanList.Parent
 Set-OzLanguage 'en'
 Wait-Ui 300
+# Every drive ticked: other drives offer only their Recycle Bin
+foreach ($b in $driveBoxes) { $b.IsChecked = $true; $Oz.CleanDriveSel[[string]$b.Tag] = $true }
+Invoke-OzSafe 'Cleanup scan' { Invoke-OzCleanScan }
+Wait-Idle 120
+$win0 = Get-OzWindowsDrive
+$otherItems = @($Oz.CleanChecks | Where-Object { $_.Tag.Drive -ne $win0 })
+if (@($otherItems | Where-Object { $_.Tag.Id -ne 'bin' }).Count) { Fail 'cleanup: another drive lists something other than its Recycle Bin' }
+elseif (@($otherItems | Where-Object IsChecked).Count) { Fail "cleanup: another drive's Recycle Bin was ticked by the scan" }
+else { Pass "cleanup: every drive scanned, other drives offer only their Recycle Bin ($($otherItems.Count))" }
+Save-Shot 'tools-cleanup-all-drives' $Oz.UI.CleanList.Parent
 
 # ---------- Ctrl+F ----------
 $Oz.UI.NavDash.IsChecked = $true

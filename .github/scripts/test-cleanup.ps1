@@ -167,7 +167,7 @@ $second = @($drives | Where-Object { -not $_.IsWindows } | Select-Object -First 
 if ($second.Count) {
     $s2 = @(Get-OzCleanScan -Drives @($second[0].Drive))
     Check ("other drive {0}: only its Recycle Bin is offered" -f $second[0].Drive) ($s2.Count -eq 1 -and $s2[0].Id -eq 'bin')
-} else { Write-Host 'SKIP  no second local drive on this machine' }
+} else { Write-Host '::notice::SKIP  no second local drive on this machine' }
 Check 'odd drive names are ignored' (@(Get-OzCleanScan -Drives @('', 'C', '\\server\share', 'C:\Windows', '1:')).Count -eq 0)
 
 # 7. Cleaning: folders are rebuilt from the catalog and checked again right before deleting
@@ -213,10 +213,12 @@ if ($beforeWin -gt 0) {
     Check ("scan: the Windows drive's Recycle Bin shows its size ({0} bytes)" -f $beforeWin) ($scanBin.Count -eq 1 -and $scanBin[0].Bytes -eq $beforeWin)
     $binOut = @(Invoke-OzCleanRun -Picks @("bin|$drive"))
     $binOut | Where-Object { $_ -is [string] } | ForEach-Object { Write-Host "      log: $_" }
-    Check "run: the Recycle Bin of $drive is emptied" ((Get-OzFolderSize $binWin) -lt $beforeWin)
+    $afterWin = Get-OzFolderSize $binWin
+    Check "run: the Recycle Bin of $drive is emptied ($beforeWin -> $afterWin bytes)" ($afterWin -lt $beforeWin)
+    Write-Host ("::notice::Recycle Bin test ran: {0} {1} -> {2} bytes; other drive before {3} bytes, after {4}" -f $drive, $beforeWin, $afterWin, $beforeOther, $(if ($binOther) { Get-OzFolderSize $binOther } else { 'n/a' }))
     if ($binOther -and $beforeOther -gt 0) { Check ("run: the Recycle Bin of {0} is left as it was" -f $second[0].Drive) ((Get-OzFolderSize $binOther) -eq $beforeOther) }
-    else { Write-Host 'SKIP  no file could be put in a second drive''s Recycle Bin on this machine' }
-} else { Write-Host 'SKIP  this machine did not put the test file in the Recycle Bin' }
+    else { Write-Host '::notice::SKIP  no file could be put in a second drive''s Recycle Bin on this machine' }
+} else { Write-Host '::notice::SKIP  this machine did not put the test file in the Recycle Bin' }
 
 # 8. The code itself: Recycle Bins only by drive letter, and no recursive delete of files
 $bins = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Clear-RecycleBin' }, $true))
