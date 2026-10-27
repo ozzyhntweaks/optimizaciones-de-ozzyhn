@@ -145,7 +145,7 @@ Save-Shot 'es-tools-cleanup' $Oz.UI.CleanList.Parent
 Set-OzLanguage 'en'
 Wait-Ui 300
 # Every drive ticked: other drives offer only their Recycle Bin
-foreach ($b in $driveBoxes) { $b.IsChecked = $true; $Oz.CleanDriveSel[[string]$b.Tag] = $true }
+foreach ($b in @($Oz.UI.CleanDrivePanel.Children | Where-Object { $_ -is [System.Windows.Controls.CheckBox] })) { $b.IsChecked = $true; $Oz.CleanDriveSel[[string]$b.Tag] = $true }
 Invoke-OzSafe 'Cleanup scan' { Invoke-OzCleanScan }
 Wait-Idle 120
 $win0 = Get-OzWindowsDrive

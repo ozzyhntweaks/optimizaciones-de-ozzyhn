@@ -22,7 +22,8 @@ trap { Write-Host ('::error::Test script stopped at line {0}: {1}' -f $_.Invocat
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path -LiteralPath $Path).Path, [ref]$tokens, [ref]$errors)
 $want = 'T', 'Get-OzWindowsDrive', 'Get-OzCleanProtected', 'Test-OzCleanPath', 'Clear-OzFolder', 'Get-OzFolderSize', 'Format-OzBytes',
-        'New-OzCleanFolder', 'Get-OzCleanCatalog', 'Get-OzCleanDrive', 'Get-OzRecycleBinPath', 'Get-OzDeliveryCacheSize', 'Get-OzCleanScan', 'Invoke-OzCleanRun'
+        'New-OzCleanFolder', 'Get-OzLongPath', 'Get-OzCleanCatalog', 'Get-OzCleanDrive', 'Get-OzRecycleBinPath', 'Get-OzRecycleBinSize',
+        'Get-OzDeliveryCacheSize', 'Get-OzCleanScan', 'Invoke-OzCleanRun'
 $defs = @($ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -in $want }, $true))
 if ($defs.Count -ne $want.Count) { throw "Expected $($want.Count) functions in $Path, found $($defs.Count)" }
 foreach ($d in $defs) { . ([scriptblock]::Create($d.Extent.Text)) }
@@ -133,6 +134,14 @@ foreach ($m in [regex]::Matches($testFn.Extent.Text, "return '([^']+)'")) {
     Check ("Spanish line for the reason '{0}'" -f $m.Groups[1].Value) (Test-Spanish $m.Groups[1].Value)
 }
 
+$short = $env:SystemRoot.Substring(0, 3) + 'PROGRA~1'
+if (Test-Path -LiteralPath $short) {
+    $long = Get-OzLongPath $short
+    Check "long path: a short 8.3 name is expanded ($short -> $long)" ($long -notmatch '~' -and [IO.Directory]::Exists($long))
+} else { Write-Host '::notice::SKIP  this drive has no 8.3 short names' }
+Check 'long path: a normal path is kept' ((Get-OzLongPath $env:SystemRoot) -eq $env:SystemRoot)
+Check 'long path: a missing path is kept' ((Get-OzLongPath "$base\NOPE~1\x") -eq "$base\NOPE~1\x")
+
 # 5. The catalog
 $catalog = @(Get-OzCleanCatalog)
 Check ('catalog has {0} items with unique ids' -f $catalog.Count) ($catalog.Count -ge 9 -and @($catalog | ForEach-Object Id | Select-Object -Unique).Count -eq $catalog.Count)
@@ -147,6 +156,7 @@ foreach ($c in $catalog) {
         else { Check ("catalog '{0}' folder accepted: {1}{2}" -f $c.Id, $f.Path, $(if ($why) { " - $why" } else { '' })) ($why -eq '') }
     }
 }
+Check 'catalog: TEMP is listed by its long name' (@($catalog | Where-Object Id -EQ 'temp' | ForEach-Object Folders | Where-Object { $_.Path -match '~' }).Count -eq 0)
 foreach ($t in 'Recycle Bin', 'Files you deleted on this drive. Check it first: after this they cannot be brought back.') { Check "Spanish line for '$t'" (Test-Spanish $t) }
 
 # 6. The scan reads only
@@ -200,23 +210,22 @@ function Send-ToBin([string]$P) {
     [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile($P, 'OnlyErrorDialogs', 'SendToRecycleBin')
 }
 Send-ToBin (Join-Path $base 'to-bin.tmp')
-$binWin = Get-OzRecycleBinPath $drive
-$beforeWin = Get-OzFolderSize $binWin
+$beforeWin = Get-OzRecycleBinSize $drive
 $binOther = $null; $beforeOther = 0
 if ($second.Count) {
-    $binOther = Get-OzRecycleBinPath $second[0].Drive
+    $binOther = $second[0].Drive
     Send-ToBin (Join-Path "$($second[0].Drive)\" ('oz-bin-test-' + (Get-Date -Format 'HHmmssfff') + '.tmp'))
-    $beforeOther = Get-OzFolderSize $binOther
+    $beforeOther = Get-OzRecycleBinSize $binOther
 }
 if ($beforeWin -gt 0) {
     $scanBin = @(Get-OzCleanScan -Drives @($drive) | Where-Object Id -EQ 'bin')
     Check ("scan: the Windows drive's Recycle Bin shows its size ({0} bytes)" -f $beforeWin) ($scanBin.Count -eq 1 -and $scanBin[0].Bytes -eq $beforeWin)
     $binOut = @(Invoke-OzCleanRun -Picks @("bin|$drive"))
     $binOut | Where-Object { $_ -is [string] } | ForEach-Object { Write-Host "      log: $_" }
-    $afterWin = Get-OzFolderSize $binWin
-    Check "run: the Recycle Bin of $drive is emptied ($beforeWin -> $afterWin bytes)" ($afterWin -lt $beforeWin)
-    Write-Host ("::notice::Recycle Bin test ran: {0} {1} -> {2} bytes; other drive before {3} bytes, after {4}" -f $drive, $beforeWin, $afterWin, $beforeOther, $(if ($binOther) { Get-OzFolderSize $binOther } else { 'n/a' }))
-    if ($binOther -and $beforeOther -gt 0) { Check ("run: the Recycle Bin of {0} is left as it was" -f $second[0].Drive) ((Get-OzFolderSize $binOther) -eq $beforeOther) }
+    $afterWin = Get-OzRecycleBinSize $drive
+    Check "run: the Recycle Bin of $drive is emptied ($beforeWin -> $afterWin bytes)" ($afterWin -eq 0)
+    Write-Host ("::notice::Recycle Bin test ran: {0} {1} -> {2} bytes; other drive before {3} bytes, after {4}" -f $drive, $beforeWin, $afterWin, $beforeOther, $(if ($binOther) { Get-OzRecycleBinSize $binOther } else { 'n/a' }))
+    if ($binOther -and $beforeOther -gt 0) { Check ("run: the Recycle Bin of {0} is left as it was" -f $binOther) ((Get-OzRecycleBinSize $binOther) -eq $beforeOther) }
     else { Write-Host '::notice::SKIP  no file could be put in a second drive''s Recycle Bin on this machine' }
 } else { Write-Host '::notice::SKIP  this machine did not put the test file in the Recycle Bin' }
 

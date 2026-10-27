@@ -2594,6 +2594,21 @@ function Format-OzBytes {
     '0 MB'
 }
 
+function Get-OzLongPath {
+    # 'C:\Users\OSCARV~1\AppData\Local\Temp' -> 'C:\Users\Oscar Vega\AppData\Local\Temp', for display and to
+    # spot TEMP and TMP naming the same folder. Returns the path unchanged when it cannot be resolved.
+    param([string]$Path)
+    if ($Path -notmatch '~') { return $Path }
+    try {
+        $di = New-Object IO.DirectoryInfo $Path
+        if (-not $di.Exists -or -not $di.Parent) { return $Path }
+        $parent = Get-OzLongPath $di.Parent.FullName
+        $m = @((New-Object IO.DirectoryInfo $parent).GetDirectories($di.Name))
+        if ($m.Count -eq 1) { return $m[0].FullName }
+    } catch { }
+    $Path
+}
+
 function New-OzCleanFolder {
     param([string]$Path, [string]$Tail, [string]$Filter = '*')
     [pscustomobject]@{ Path = $Path; Tail = $Tail; Filter = $Filter }
@@ -2608,7 +2623,8 @@ function Get-OzCleanCatalog {
     $seen = @{}
     foreach ($p in @($env:TEMP, $env:TMP)) {
         if (-not $p) { continue }
-        $k = $p.TrimEnd('\').ToUpperInvariant()
+        $p = Get-OzLongPath $p.TrimEnd('\')
+        $k = $p.ToUpperInvariant()
         if ($seen.ContainsKey($k)) { continue }
         $seen[$k] = $true
         # ...\Temp, or ...\Temp\2 in a Remote Desktop session
@@ -2684,6 +2700,12 @@ function Get-OzRecycleBinPath {
     '{0}\$Recycle.Bin\{1}' -f $Drive, $sid
 }
 
+function Get-OzRecycleBinSize {
+    # What the Recycle Bin of $Drive holds: its $R (deleted item) and $I (info) entries, not desktop.ini
+    param([string]$Drive)
+    Get-OzFolderSize (Get-OzRecycleBinPath $Drive) '$*'
+}
+
 function Get-OzDeliveryCacheSize {
     # Bytes in the Delivery Optimization cache as Windows reports them, or -1
     try {
@@ -2727,11 +2749,10 @@ function Get-OzCleanScan {
                 $out.Add($item)
             }
         }
-        $bin = Get-OzRecycleBinPath $drive
         $item = [pscustomobject]@{
             Key = ('bin|{0}' -f $drive); Id = 'bin'; Drive = $drive; Kind = 'Bin'; Name = 'Recycle Bin'
             Desc = 'Files you deleted on this drive. Check it first: after this they cannot be brought back.'; Rec = $false
-            Bytes = (Get-OzFolderSize $bin); Paths = [string[]]@(('{0}\$Recycle.Bin' -f $drive)); Skipped = @()
+            Bytes = (Get-OzRecycleBinSize $drive); Paths = [string[]]@(('{0}\$Recycle.Bin' -f $drive)); Skipped = @()
         }
         $out.Add($item)
     }
@@ -2753,11 +2774,10 @@ function Invoke-OzCleanRun {
         $drive = $parts[1].ToUpperInvariant()
         if ($id -eq 'bin') {
             if (-not @(Get-OzCleanDrive | Where-Object Drive -EQ $drive).Count) { '  ! ' + (T 'Drive {0} is not a local drive; its Recycle Bin was left alone.' $drive); continue }
-            $bin = Get-OzRecycleBinPath $drive
-            $before = Get-OzFolderSize $bin
+            $before = Get-OzRecycleBinSize $drive
             try {
                 Clear-RecycleBin -DriveLetter $drive.Substring(0, 1) -Force -ErrorAction Stop
-                $freed = [math]::Max([int64]0, $before - [math]::Max([int64]0, (Get-OzFolderSize $bin)))
+                $freed = [math]::Max([int64]0, $before - [math]::Max([int64]0, (Get-OzRecycleBinSize $drive)))
                 $total += $freed
                 '  {0}: {1}' -f (T 'Recycle Bin of drive {0}' $drive), (Format-OzBytes $freed)
             } catch { '  ! ' + (T 'Recycle Bin of drive {0}' $drive) + ': ' + $_.Exception.Message }
