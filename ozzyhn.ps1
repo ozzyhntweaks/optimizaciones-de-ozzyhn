@@ -26,7 +26,7 @@
 
 #region ============================ STATE ============================
 $Oz = [hashtable]::Synchronized(@{})
-$Oz.Version   = '1.2.1'
+$Oz.Version   = '1.3.0'
 $Oz.AppName   = 'Optimizaciones de Ozzyhn'
 $Oz.Brand     = 'OZZYHN TWEAKS'
 $Oz.RepoOwner = 'ozzyhntweaks'
@@ -1350,7 +1350,7 @@ function Get-OzInsights {
     }
 
     if ($Sys.Storage.FreePct -gt 0 -and $Sys.Storage.FreePct -lt 15) {
-        & $add (New-OzInsight warn (T 'Drive {0} is almost full ({1} GB free)' $env:SystemDrive $Sys.Storage.FreeGB) (T 'Low free space slows Windows and updates. Run QUICK CLEAN in TOOLS.') 'Tools')
+        & $add (New-OzInsight warn (T 'Drive {0} is almost full ({1} GB free)' $env:SystemDrive $Sys.Storage.FreeGB) (T 'Low free space slows Windows and updates. Use CLEAN UP FILES in TOOLS.') 'Tools')
     }
 
     if (-not $Sys.OS.IsWin11 -and $Sys.OS.Build -ge 10240) {
@@ -2457,15 +2457,16 @@ $Oz.Bloat = @(
 #endregion
 
 #region ============================ CLEANUP ============================
-# Quick clean empties a fixed list of Windows cache folders on the Windows drive, and nothing else.
-# Up to 1.2.0 it emptied each folder with Remove-Item -Recurse and trusted TEMP / TMP as they were.
-# Windows PowerShell 5.1 can follow a junction or symbolic link inside the folder and delete what
-# it points to, on any drive, and a TEMP pointing at another drive was emptied whole. It also
-# emptied the Recycle Bin of every drive. Now:
-#   - every folder is checked first (Test-OzCleanPath): on the Windows drive, not a drive root,
-#     the expected Windows folder, not holding a personal or system folder, and no link on the way;
-#   - links found inside are skipped: never followed and never deleted (Clear-OzFolder);
-#   - only the Recycle Bin of the Windows drive is emptied.
+# CLEAN UP FILES (TOOLS page): the user picks the drives, SCAN measures what can be cleaned there,
+# and only the items they tick are deleted. Nothing outside this list is ever offered:
+#   - Windows cache folders (Get-OzCleanCatalog), on the Windows drive only;
+#   - the Recycle Bin, on each local drive the user picked.
+# Every folder is checked by Test-OzCleanPath when it is measured and again right before it is
+# emptied: on the Windows drive, not a drive root, the expected Windows folder, not holding a
+# personal or system folder, and no junction or symbolic link on the way. Inside, links are never
+# followed and never deleted (Clear-OzFolder), so nothing on another drive can be reached.
+# Up to 1.2.0 Quick clean used Remove-Item -Recurse, which in Windows PowerShell 5.1 can follow
+# such a link, and emptied the Recycle Bin of every drive without asking.
 
 function Get-OzWindowsDrive {
     # 'C:' for the drive Windows runs from
@@ -2476,7 +2477,7 @@ function Get-OzWindowsDrive {
 }
 
 function Get-OzCleanProtected {
-    # Folders Quick clean must never empty, and never empty a folder that holds one of them
+    # Folders that must never be emptied, and never sit inside a folder being emptied
     $list = New-Object System.Collections.Generic.List[string]
     foreach ($v in @($env:SystemRoot, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramW6432, $env:ProgramData,
             $env:PUBLIC, $env:USERPROFILE, $env:APPDATA, $env:LOCALAPPDATA, $env:OneDrive)) {
@@ -2499,7 +2500,7 @@ function Get-OzCleanProtected {
 }
 
 function Test-OzCleanPath {
-    # Returns '' when Quick clean may empty $Path, otherwise the reason it must not.
+    # Returns '' when this folder may be emptied, otherwise the reason it must not.
     # $Tail is a regex for how the full path must end, e.g. '\\Temp$'.
     param([string]$Path, [string]$Tail)
     if (-not $Path -or $Path -notmatch '^[A-Za-z]:\\') { return 'not a full path' }
@@ -2561,9 +2562,49 @@ function Clear-OzFolder {
     $freed
 }
 
-function Get-OzCleanTarget {
-    # The only folders Quick clean empties. Tail: how the full path must end (checked by Test-OzCleanPath).
-    $list = New-Object System.Collections.Generic.List[object]
+function Get-OzFolderSize {
+    # The bytes Clear-OzFolder would look at in $Path, by the same rules (links are not followed).
+    # 0 when the folder does not exist, -1 when it exists but cannot be read.
+    param([string]$Path, [string]$Filter = '*')
+    $total = [int64]0
+    if (-not $Path -or -not [IO.Directory]::Exists($Path)) { return $total }
+    $link = [IO.FileAttributes]::ReparsePoint
+    $top = New-Object IO.DirectoryInfo $Path
+    if ($top.Attributes -band $link) { return $total }
+    $first = $null
+    try { $first = $top.GetFileSystemInfos($Filter) } catch { return [int64]-1 }
+    $todo = New-Object System.Collections.Generic.Stack[object]
+    $todo.Push($first)
+    while ($todo.Count) {
+        foreach ($i in $todo.Pop()) {
+            if ($i.Attributes -band $link) { continue }
+            if ($i -is [IO.DirectoryInfo]) { try { $todo.Push($i.GetFileSystemInfos()) } catch { }; continue }
+            $total += $i.Length
+        }
+    }
+    $total
+}
+
+function Format-OzBytes {
+    param([int64]$Bytes)
+    if ($Bytes -lt 0) { return (T 'size unknown') }
+    if ($Bytes -ge 1GB) { return ('{0:N1} GB' -f ($Bytes / 1GB)) }
+    if ($Bytes -ge 1MB) { return ('{0:N0} MB' -f ($Bytes / 1MB)) }
+    if ($Bytes -gt 0) { return ('{0:N0} KB' -f [math]::Max(1, [math]::Round($Bytes / 1KB))) }
+    '0 MB'
+}
+
+function New-OzCleanFolder {
+    param([string]$Path, [string]$Tail, [string]$Filter = '*')
+    [pscustomobject]@{ Path = $Path; Tail = $Tail; Filter = $Filter }
+}
+
+function Get-OzCleanCatalog {
+    # Every Windows cache CLEAN UP FILES can offer. All of it lives on the Windows drive.
+    # Rec = pre-selected after a scan. Tail = how each full path must end (see Test-OzCleanPath).
+    $la = $env:LOCALAPPDATA
+    $win = $env:SystemRoot
+    $temps = New-Object System.Collections.Generic.List[object]
     $seen = @{}
     foreach ($p in @($env:TEMP, $env:TMP)) {
         if (-not $p) { continue }
@@ -2571,50 +2612,230 @@ function Get-OzCleanTarget {
         if ($seen.ContainsKey($k)) { continue }
         $seen[$k] = $true
         # ...\Temp, or ...\Temp\2 in a Remote Desktop session
-        $list.Add([pscustomobject]@{ Path = $p; Label = 'Your temp folder'; Tail = '\\Temp(\\\d+)?$'; Filter = '*'; Services = @() })
+        $temps.Add((New-OzCleanFolder $p '\\Temp(\\\d+)?$'))
     }
-    $win = $env:SystemRoot
-    $more = @(
-        @("$win\Temp", 'Windows temp', '\\Temp$', '*', @()),
-        @("$env:LOCALAPPDATA\CrashDumps", 'Crash dumps', '\\CrashDumps$', '*', @()),
-        @("$env:ProgramData\Microsoft\Windows\WER\ReportArchive", 'Error reports (archive)', '\\WER\\ReportArchive$', '*', @()),
-        @("$env:ProgramData\Microsoft\Windows\WER\ReportQueue", 'Error reports (queue)', '\\WER\\ReportQueue$', '*', @()),
-        @("$env:LOCALAPPDATA\Microsoft\Windows\INetCache", 'Legacy web cache', '\\Microsoft\\Windows\\INetCache$', '*', @()),
-        @("$win\Logs\CBS", 'Servicing logs', '\\Logs\\CBS$', '*', @()),
-        @("$env:LOCALAPPDATA\Microsoft\Windows\Explorer", 'Thumbnail cache', '\\Microsoft\\Windows\\Explorer$', 'thumbcache_*.db', @()),
-        @("$win\SoftwareDistribution\Download", 'Windows Update downloads', '\\SoftwareDistribution\\Download$', '*', @('wuauserv', 'bits'))
+    $none = [string[]]@()
+    @(
+        [pscustomobject]@{ Id = 'temp'; Kind = 'Folders'; Rec = $true; Services = $none; Folders = $temps.ToArray()
+            Name = 'Your temp folder'; Desc = 'Leftovers from installers and apps. Files that are open right now are skipped.'
+        }
+        [pscustomobject]@{ Id = 'wintemp'; Kind = 'Folders'; Rec = $true; Services = $none; Folders = @((New-OzCleanFolder "$win\Temp" '\\Temp$'))
+            Name = 'Windows temp'; Desc = 'Leftovers from Windows itself and from installers that ran as administrator.'
+        }
+        [pscustomobject]@{ Id = 'wu'; Kind = 'Folders'; Rec = $true; Services = [string[]]@('wuauserv', 'bits')
+            Folders = @((New-OzCleanFolder "$win\SoftwareDistribution\Download" '\\SoftwareDistribution\\Download$'))
+            Name = 'Windows Update downloads'; Desc = 'Update files that are already installed. Windows downloads again anything it still needs.'
+        }
+        [pscustomobject]@{ Id = 'do'; Kind = 'DeliveryOpt'; Rec = $true; Services = $none
+            Folders = @((New-OzCleanFolder "$win\ServiceProfiles\NetworkService\AppData\Local\Microsoft\Windows\DeliveryOptimization\Cache" '\\Windows\\DeliveryOptimization\\Cache$'))
+            Name = 'Delivery Optimization cache'; Desc = 'Pieces of updates Windows keeps to share with other PCs.'
+        }
+        [pscustomobject]@{ Id = 'thumbs'; Kind = 'Folders'; Rec = $true; Services = $none
+            Folders = @((New-OzCleanFolder "$la\Microsoft\Windows\Explorer" '\\Microsoft\\Windows\\Explorer$' 'thumbcache_*.db'))
+            Name = 'Thumbnail cache'; Desc = 'Picture and video previews. Windows makes them again, so big picture folders open slower once.'
+        }
+        [pscustomobject]@{ Id = 'dumps'; Kind = 'Folders'; Rec = $true; Services = $none; Folders = @((New-OzCleanFolder "$la\CrashDumps" '\\CrashDumps$'))
+            Name = 'Crash dumps'; Desc = 'Memory dumps from apps that crashed. Only needed to send a crash to the app maker.'
+        }
+        [pscustomobject]@{ Id = 'wer'; Kind = 'Folders'; Rec = $true; Services = $none
+            Folders = @((New-OzCleanFolder "$env:ProgramData\Microsoft\Windows\WER\ReportArchive" '\\Microsoft\\Windows\\WER\\ReportArchive$'),
+                (New-OzCleanFolder "$env:ProgramData\Microsoft\Windows\WER\ReportQueue" '\\Microsoft\\Windows\\WER\\ReportQueue$'))
+            Name = 'Error reports'; Desc = 'Problem reports already sent to Microsoft or waiting to be sent.'
+        }
+        [pscustomobject]@{ Id = 'inet'; Kind = 'Folders'; Rec = $true; Services = $none
+            Folders = @((New-OzCleanFolder "$la\Microsoft\Windows\INetCache" '\\Microsoft\\Windows\\INetCache$'))
+            Name = 'Legacy web cache'; Desc = 'Cache of Internet Explorer and older apps that still use it. Edge, Chrome and Firefox keep their own.'
+        }
+        [pscustomobject]@{ Id = 'cbs'; Kind = 'Folders'; Rec = $true; Services = $none; Folders = @((New-OzCleanFolder "$win\Logs\CBS" '\\Logs\\CBS$'))
+            Name = 'Servicing logs'; Desc = 'Logs from installing Windows updates. Only useful when an update fails.'
+        }
+        [pscustomobject]@{ Id = 'shaders'; Kind = 'Folders'; Rec = $false; Services = $none
+            Folders = @((New-OzCleanFolder "$la\D3DSCache" '\\D3DSCache$'),
+                (New-OzCleanFolder "$la\NVIDIA\DXCache" '\\NVIDIA\\DXCache$'), (New-OzCleanFolder "$la\NVIDIA\GLCache" '\\NVIDIA\\GLCache$'),
+                (New-OzCleanFolder "$la\AMD\DxCache" '\\AMD\\DxCache$'), (New-OzCleanFolder "$la\AMD\GLCache" '\\AMD\\GLCache$'),
+                (New-OzCleanFolder "$la\AMD\VkCache" '\\AMD\\VkCache$'), (New-OzCleanFolder "$la\Intel\ShaderCache" '\\Intel\\ShaderCache$'))
+            Name = 'Graphics shader caches'; Desc = 'Shaders compiled by DirectX and the graphics driver. Games build them again, so their first launch can stutter.'
+        }
     )
-    foreach ($m in $more) { $list.Add([pscustomobject]@{ Path = $m[0]; Label = $m[1]; Tail = $m[2]; Filter = $m[3]; Services = $m[4] }) }
-    $list.ToArray()
 }
 
-function Invoke-OzQuickClean {
-    $res = Invoke-OzJob -Activity (T 'Cleaning temporary files...') -ScriptBlock {
-        $total = [int64]0
-        foreach ($t in @(Get-OzCleanTarget)) {
-            $why = Test-OzCleanPath $t.Path $t.Tail
-            if ($why) { '  ' + (T '{0}: skipped ({1}): {2}' (T $t.Label) (T $why) $t.Path); continue }
-            $stop = @($t.Services).Count -gt 0
-            if ($stop) {
-                T 'Stopping Windows Update to clear its download cache...'
-                Stop-Service -Name $t.Services -Force -ErrorAction SilentlyContinue
+function Get-OzCleanDrive {
+    # Local drives that can be picked: fixed and removable ones that are ready (not empty or locked).
+    # Network drives are never offered.
+    $win = Get-OzWindowsDrive
+    foreach ($d in @([IO.DriveInfo]::GetDrives())) {
+        try {
+            if ([string]$d.DriveType -notin 'Fixed', 'Removable') { continue }
+            if (-not $d.IsReady) { continue }
+            $name = $d.Name.TrimEnd('\').ToUpperInvariant()
+            if ($name -notmatch '^[A-Z]:$') { continue }
+            [pscustomobject]@{
+                Drive = $name; Label = [string]$d.VolumeLabel; IsWindows = ($name -eq $win)
+                FreeGB = [math]::Round($d.AvailableFreeSpace / 1GB, 1); SizeGB = [math]::Round($d.TotalSize / 1GB, 1)
             }
-            $freed = [int64]0
-            try { $freed = Clear-OzFolder $t.Path $t.Filter } catch { }
-            finally { if ($stop) { Start-Service -Name $t.Services -ErrorAction SilentlyContinue } }
-            $total += $freed
-            '  {0}: {1:N0} MB' -f (T $t.Label), ($freed / 1MB)
-        }
-        try { Delete-DeliveryOptimizationCache -Force -ErrorAction Stop; '  ' + (T 'Delivery Optimization cache cleared') } catch { }
-        # Only the Windows drive. Other drives' Recycle Bins are left as they are.
-        $drive = Get-OzWindowsDrive
-        try { Clear-RecycleBin -DriveLetter $drive.Substring(0, 1) -Force -ErrorAction Stop; '  ' + (T 'Recycle Bin of drive {0} emptied' $drive) } catch { }
-        [pscustomobject]@{ FreedMB = [math]::Round($total / 1MB) }
+        } catch { }
     }
-    $r = @($res) | Select-Object -First 1
-    if ($r) { Write-OzLog ((T 'Quick clean finished: {0:N0} MB freed.') -f $r.FreedMB) 'OK' }
-    if ($r) { $Oz.LastCleanMB = $r.FreedMB }
+}
+
+function Get-OzRecycleBinPath {
+    # The Recycle Bin folder of the account running the app on $Drive (what Clear-RecycleBin empties)
+    param([string]$Drive)
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    '{0}\$Recycle.Bin\{1}' -f $Drive, $sid
+}
+
+function Get-OzDeliveryCacheSize {
+    # Bytes in the Delivery Optimization cache as Windows reports them, or -1
+    try {
+        $snap = Get-DeliveryOptimizationPerfSnap -ErrorAction Stop
+        foreach ($p in @($snap.PSObject.Properties)) { if ($p.Name -match '^CacheSize') { return [int64]$p.Value } }
+    } catch { }
+    [int64]-1
+}
+
+function Get-OzCleanScan {
+    # Measures what can be cleaned on $Drives. Reads only; deletes nothing.
+    param([string[]]$Drives)
+    $win = Get-OzWindowsDrive
+    $picked = @($Drives | Where-Object { $_ -match '^[A-Za-z]:$' } | ForEach-Object { $_.ToUpperInvariant() } | Select-Object -Unique)
+    $out = New-Object System.Collections.Generic.List[object]
+    foreach ($drive in $picked) {
+        if ($drive -eq $win) {
+            $hasDo = [bool](Get-Command Delete-DeliveryOptimizationCache -ErrorAction SilentlyContinue)
+            foreach ($c in @(Get-OzCleanCatalog)) {
+                if ($c.Kind -eq 'DeliveryOpt' -and -not $hasDo) { continue }
+                $bytes = [int64]0; $unknown = $false
+                $paths = New-Object System.Collections.Generic.List[string]
+                $skipped = New-Object System.Collections.Generic.List[object]
+                foreach ($f in @($c.Folders)) {
+                    $why = Test-OzCleanPath $f.Path $f.Tail
+                    if ($why) { if ($f.Path) { $skipped.Add([pscustomobject]@{ Path = $f.Path; Why = $why }) }; continue }
+                    if (-not [IO.Directory]::Exists($f.Path)) { continue }
+                    $s = Get-OzFolderSize $f.Path $f.Filter
+                    if ($s -lt 0) { $unknown = $true } else { $bytes += $s }
+                    $paths.Add($f.Path)
+                }
+                if ($c.Kind -eq 'DeliveryOpt') {
+                    $reported = Get-OzDeliveryCacheSize
+                    if ($reported -ge 0) { $bytes = $reported; $unknown = $false }
+                    elseif (-not $paths.Count) { $unknown = $true }
+                } elseif (-not $paths.Count -and -not $skipped.Count) { continue }
+                $item = [pscustomobject]@{
+                    Key = ('{0}|{1}' -f $c.Id, $drive); Id = $c.Id; Drive = $drive; Kind = $c.Kind; Name = $c.Name; Desc = $c.Desc; Rec = [bool]$c.Rec
+                    Bytes = $(if ($unknown) { [int64]-1 } else { $bytes }); Paths = $paths.ToArray(); Skipped = $skipped.ToArray()
+                }
+                $out.Add($item)
+            }
+        }
+        $bin = Get-OzRecycleBinPath $drive
+        $item = [pscustomobject]@{
+            Key = ('bin|{0}' -f $drive); Id = 'bin'; Drive = $drive; Kind = 'Bin'; Name = 'Recycle Bin'
+            Desc = 'Files you deleted on this drive. Check it first: after this they cannot be brought back.'; Rec = $false
+            Bytes = (Get-OzFolderSize $bin); Paths = [string[]]@(('{0}\$Recycle.Bin' -f $drive)); Skipped = @()
+        }
+        $out.Add($item)
+    }
+    $out.ToArray()
+}
+
+function Invoke-OzCleanRun {
+    # Cleans the picked items ('id|drive' keys from Get-OzCleanScan). Every folder is rebuilt from the
+    # catalog and checked again here, right before anything is deleted. Writes one log line per item.
+    param([string[]]$Picks)
+    $win = Get-OzWindowsDrive
+    $catalog = @{}
+    foreach ($c in @(Get-OzCleanCatalog)) { $catalog[$c.Id] = $c }
+    $total = [int64]0
+    foreach ($pick in @($Picks)) {
+        $parts = ([string]$pick) -split '\|', 2
+        if ($parts.Count -ne 2 -or $parts[1] -notmatch '^[A-Za-z]:$') { continue }
+        $id = $parts[0]
+        $drive = $parts[1].ToUpperInvariant()
+        if ($id -eq 'bin') {
+            if (-not @(Get-OzCleanDrive | Where-Object Drive -EQ $drive).Count) { '  ! ' + (T 'Drive {0} is not a local drive; its Recycle Bin was left alone.' $drive); continue }
+            $bin = Get-OzRecycleBinPath $drive
+            $before = Get-OzFolderSize $bin
+            try {
+                Clear-RecycleBin -DriveLetter $drive.Substring(0, 1) -Force -ErrorAction Stop
+                $freed = [math]::Max([int64]0, $before - [math]::Max([int64]0, (Get-OzFolderSize $bin)))
+                $total += $freed
+                '  {0}: {1}' -f (T 'Recycle Bin of drive {0}' $drive), (Format-OzBytes $freed)
+            } catch { '  ! ' + (T 'Recycle Bin of drive {0}' $drive) + ': ' + $_.Exception.Message }
+            continue
+        }
+        $c = $catalog[$id]
+        if (-not $c -or $drive -ne $win) { continue }
+        if ($c.Kind -eq 'DeliveryOpt') {
+            $before = Get-OzDeliveryCacheSize
+            try {
+                Delete-DeliveryOptimizationCache -Force -ErrorAction Stop
+                $freed = [int64]0
+                $after = Get-OzDeliveryCacheSize
+                if ($before -ge 0 -and $after -ge 0) { $freed = [math]::Max([int64]0, $before - $after) }
+                $total += $freed
+                '  {0}: {1}' -f (T $c.Name), $(if ($before -ge 0) { Format-OzBytes $freed } else { T 'cleared' })
+            } catch { '  ! ' + (T $c.Name) + ': ' + $_.Exception.Message }
+            continue
+        }
+        $stop = @($c.Services).Count -gt 0
+        if ($stop) {
+            T 'Stopping Windows Update to clear its download cache...'
+            Stop-Service -Name $c.Services -Force -ErrorAction SilentlyContinue
+        }
+        $freed = [int64]0
+        try {
+            foreach ($f in @($c.Folders)) {
+                $why = Test-OzCleanPath $f.Path $f.Tail
+                if ($why) { if ($f.Path) { '  ' + (T '{0}: skipped ({1}): {2}' (T $c.Name) (T $why) $f.Path) }; continue }
+                $freed += (Clear-OzFolder $f.Path $f.Filter)
+            }
+        } catch { } finally { if ($stop) { Start-Service -Name $c.Services -ErrorAction SilentlyContinue } }
+        $total += $freed
+        '  {0}: {1}' -f (T $c.Name), (Format-OzBytes $freed)
+    }
+    [pscustomobject]@{ FreedBytes = $total }
+}
+
+function Invoke-OzCleanScan {
+    # SCAN button: measures the picked drives in the background and shows the list
+    if ($null -eq $Oz.CleanDriveSel) { Show-OzCleanDrives }
+    $drives = @($Oz.CleanDriveSel.Keys | Where-Object { $Oz.CleanDriveSel[$_] } | Sort-Object)
+    if (-not $drives.Count) { Write-OzLog (T 'Pick at least one drive.') 'WARN'; return }
+    $res = Invoke-OzJob -Activity (T 'Measuring what can be cleaned...') -ArgumentList @(, [string[]]$drives) -ScriptBlock {
+        param($d)
+        Get-OzCleanScan -Drives $d
+    }
+    $items = @($res | Where-Object { $_ -and $_.Key })
+    $Oz.CleanShown = $true
+    Show-OzCleanList $items
+    $known = [int64]0
+    foreach ($i in $items) { if ($i.Bytes -gt 0) { $known += $i.Bytes } }
+    Write-OzLog (T 'Cleanup scan of {0}: {1} can be cleaned.' ($drives -join ', ') (Format-OzBytes $known)) 'OK'
+}
+
+function Invoke-OzCleanSelected {
+    # CLEAN SELECTED button: asks first, cleans in the background, then measures again
+    $sel = @($Oz.CleanChecks | Where-Object { $_.IsChecked -and $_.IsEnabled } | ForEach-Object { $_.Tag })
+    if (-not $sel.Count) { Write-OzLog (T 'Select at least one item to clean.') 'WARN'; return }
+    $rows = foreach ($s in $sel) {
+        @{ Text = ('{0}  {1}  -  {2}' -f $s.Drive, (T $s.Name), (Format-OzBytes $s.Bytes)); Color = '#E6F1FF'; Glyph = [char]0xE74D }
+    }
+    $msg = T 'Delete these {0} item(s)? This cannot be undone. Files that are open right now are skipped.' $sel.Count
+    if ((Show-OzDialog -Text $msg -Buttons YesNo -Kind Warning -Rows @($rows) -Labels @((T 'DELETE'), (T 'CANCEL'))) -ne 'Yes') { return }
+    $picks = [string[]]@($sel | ForEach-Object { $_.Key })
+    $res = Invoke-OzJob -Activity (T 'Cleaning the selected items...') -ArgumentList @(, $picks) -ScriptBlock {
+        param($p)
+        Invoke-OzCleanRun -Picks $p
+    }
+    $r = @($res) | Where-Object { $_ -and $null -ne $_.FreedBytes } | Select-Object -First 1
+    if ($r) {
+        $Oz.LastCleanMB = [math]::Round($r.FreedBytes / 1MB)
+        Write-OzLog (T 'Cleanup finished: {0} freed.' (Format-OzBytes $r.FreedBytes)) 'OK'
+    }
     Update-OzCleanText
+    $Oz.CleanDrives = $null
+    Show-OzCleanDrives
+    Invoke-OzCleanScan
 }
 #endregion
 
@@ -2889,8 +3110,8 @@ Si la etiqueta de tu RAM indica una velocidad mayor, activa XMP / EXPO en la BIO
 Drive {0} is almost full ({1} GB free)
 La unidad {0} est&aacute; casi llena ({1} GB libres)
 
-Low free space slows Windows and updates. Run QUICK CLEAN in TOOLS.
-Poco espacio libre vuelve lentos a Windows y a las actualizaciones. Usa LIMPIEZA R&Aacute;PIDA en HERRAMIENTAS.
+Low free space slows Windows and updates. Use CLEAN UP FILES in TOOLS.
+Poco espacio libre vuelve lentos a Windows y a las actualizaciones. Usa LIMPIAR ARCHIVOS en HERRAMIENTAS.
 
 Windows 10 is past end of support
 Windows 10 ya no tiene soporte
@@ -3051,12 +3272,6 @@ Descargas de Windows Update
 Delivery Optimization cache cleared
 Cach&eacute; de Optimizaci&oacute;n de distribuci&oacute;n vaciada
 
-Recycle Bin of drive {0} emptied
-Papelera de la unidad {0} vaciada
-
-Delete temporary files and Windows caches on drive {0}, and empty its Recycle Bin?\n\nOnly Windows cache folders are cleaned. Your own files and your other drives are never touched.
-&iquest;Borrar los archivos temporales y las cach&eacute;s de Windows de la unidad {0} y vaciar su Papelera?\n\nSolo se limpian carpetas de cach&eacute; de Windows. Tus archivos y tus otras unidades nunca se tocan.
-
 {0}: skipped ({1}): {2}
 {0}: no se limpi&oacute; ({1}): {2}
 
@@ -3086,6 +3301,150 @@ no se pudo revisar
 
 Quick clean finished: {0:N0} MB freed.
 Limpieza r&aacute;pida terminada: {0:N0} MB liberados.
+
+size unknown
+tama&ntilde;o desconocido
+
+Leftovers from installers and apps. Files that are open right now are skipped.
+Restos de instaladores y apps. Los archivos abiertos en este momento se saltan.
+
+Leftovers from Windows itself and from installers that ran as administrator.
+Restos de Windows y de instaladores que se ejecutaron como administrador.
+
+Update files that are already installed. Windows downloads again anything it still needs.
+Archivos de actualizaciones ya instaladas. Windows vuelve a descargar lo que todav&iacute;a necesite.
+
+Delivery Optimization cache
+Cach&eacute; de Optimizaci&oacute;n de distribuci&oacute;n
+
+Pieces of updates Windows keeps to share with other PCs.
+Partes de actualizaciones que Windows guarda para compartir con otras PCs.
+
+Picture and video previews. Windows makes them again, so big picture folders open slower once.
+Vistas previas de fotos y videos. Windows las vuelve a crear, as&iacute; que las carpetas grandes de fotos abren m&aacute;s lento una vez.
+
+Memory dumps from apps that crashed. Only needed to send a crash to the app maker.
+Volcados de memoria de apps que se cerraron por un error. Solo sirven para enviar el fallo a quien hizo la app.
+
+Error reports
+Informes de errores
+
+Problem reports already sent to Microsoft or waiting to be sent.
+Informes de problemas ya enviados a Microsoft o pendientes de enviar.
+
+Cache of Internet Explorer and older apps that still use it. Edge, Chrome and Firefox keep their own.
+Cach&eacute; de Internet Explorer y de apps antiguas que todav&iacute;a la usan. Edge, Chrome y Firefox tienen la suya.
+
+Logs from installing Windows updates. Only useful when an update fails.
+Registros de la instalaci&oacute;n de actualizaciones de Windows. Solo sirven cuando una actualizaci&oacute;n falla.
+
+Graphics shader caches
+Cach&eacute;s de shaders de gr&aacute;ficos
+
+Shaders compiled by DirectX and the graphics driver. Games build them again, so their first launch can stutter.
+Shaders compilados por DirectX y el driver de gr&aacute;ficos. Los juegos los vuelven a crear, as&iacute; que su primer inicio puede dar tirones.
+
+Recycle Bin
+Papelera de reciclaje
+
+Files you deleted on this drive. Check it first: after this they cannot be brought back.
+Archivos que borraste en esta unidad. Rev&iacute;sala primero: despu&eacute;s no se pueden recuperar.
+
+Drive {0} is not a local drive; its Recycle Bin was left alone.
+La unidad {0} no es local; su Papelera no se toc&oacute;.
+
+Recycle Bin of drive {0}
+Papelera de la unidad {0}
+
+cleared
+vaciada
+
+Pick at least one drive.
+Elige al menos una unidad.
+
+Measuring what can be cleaned...
+Midiendo lo que se puede limpiar...
+
+Cleanup scan of {0}: {1} can be cleaned.
+An&aacute;lisis de limpieza de {0}: se pueden limpiar {1}.
+
+Select at least one item to clean.
+Selecciona al menos un elemento para limpiar.
+
+Delete these {0} item(s)? This cannot be undone. Files that are open right now are skipped.
+&iquest;Borrar estos {0} elemento(s)? No se puede deshacer. Los archivos abiertos en este momento se saltan.
+
+DELETE
+BORRAR
+
+Cleaning the selected items...
+Limpiando los elementos seleccionados...
+
+Cleanup finished: {0} freed.
+Limpieza terminada: {0} liberados.
+
+No local drives found.
+No se encontraron unidades locales.
+
+{0}  Windows drive
+{0}  Unidad de Windows
+
+{0}  Local drive
+{0}  Unidad local
+
+{0:N1} GB free of {1:N1} GB
+{0:N1} GB libres de {1:N1} GB
+
+Nothing to clean on the drives you picked.
+No hay nada que limpiar en las unidades que elegiste.
+
+Tick what you want to delete. Recommended items that have something to clean are already ticked.
+Marca lo que quieres borrar. Los recomendados que tienen algo que limpiar ya est&aacute;n marcados.
+
+{0}  WINDOWS DRIVE
+{0}  UNIDAD DE WINDOWS
+
+{0}  OTHER DRIVE  -  only its Recycle Bin can be emptied here, your files are never listed
+{0}  OTRA UNIDAD  -  aqu&iacute; solo se puede vaciar su Papelera, tus archivos nunca aparecen
+
++{0} more
++{0} m&aacute;s
+
+Left alone: {0} ({1})
+No se toca: {0} ({1})
+
+nothing to clean
+nada que limpiar
+
+Selected: {0} item(s), about {1}
+Seleccionado: {0} elemento(s), unos {1}
+
+Pick the drives, then press SCAN to see what can be cleaned on them.
+Elige las unidades y presiona ANALIZAR para ver qu&eacute; se puede limpiar en ellas.
+
+CLEAN UP FILES
+LIMPIAR ARCHIVOS
+
+Pick the drives, press SCAN, then tick what to delete. Only Windows cache folders and Recycle Bins are listed - never your own files. Recommended items are ticked for you.
+Elige las unidades, presiona ANALIZAR y marca lo que quieres borrar. Solo aparecen carpetas de cach&eacute; de Windows y Papeleras, nunca tus archivos. Los recomendados ya vienen marcados.
+
+DRIVES
+UNIDADES
+
+SCAN
+ANALIZAR
+
+CLEAN SELECTED
+LIMPIAR SELECCIONADOS
+
+WINDOWS CLEANUP TOOLS
+HERRAMIENTAS DE LIMPIEZA DE WINDOWS
+
+Cleanup scan
+An&aacute;lisis de limpieza
+
+Cleanup
+Limpieza
 
 No connected network adapter found.
 No se encontr&oacute; ning&uacute;n adaptador de red conectado.
@@ -4920,8 +5279,8 @@ Limpieza, reparaci&oacute;n, DNS, energ&iacute;a, almacenamiento y control de in
 CLEANUP
 LIMPIEZA
 
-Temp files, crash dumps, error reports, thumbnail cache, Windows Update downloads, Delivery Optimization cache and the Recycle Bin of the Windows drive. Other drives are never touched.
-Archivos temporales, volcados de errores, informes de errores, cach&eacute; de miniaturas, descargas de Windows Update, cach&eacute; de Optimizaci&oacute;n de distribuci&oacute;n y la Papelera de la unidad de Windows. Las dem&aacute;s unidades nunca se tocan.
+Windows' own cleaners. DEEP CLEAN removes old update files that Windows keeps in its component store. DISK CLEANUP opens the classic tool.
+Los limpiadores propios de Windows. LIMPIEZA PROFUNDA quita archivos viejos de actualizaciones que Windows guarda en su almac&eacute;n de componentes. LIBERADOR DE ESPACIO abre la herramienta cl&aacute;sica.
 
 QUICK CLEAN
 LIMPIEZA R&Aacute;PIDA
@@ -6131,17 +6490,33 @@ $Oz.Xaml = @'
                                 <TextBlock Text="OZZYHN TWEAKS  //" Style="{StaticResource Kicker}"/>
                                     <TextBlock Text="TOOLS" Style="{StaticResource H1}"/>
                                 <TextBlock Style="{StaticResource Body}" Margin="0,4,0,16" Text="Cleanup, repair, DNS, power, storage and startup control. Long built-in tools open in their own window so you can watch them."/>
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <TextBlock Text="CLEAN UP FILES" Style="{StaticResource H2}"/>
+                                        <TextBlock Style="{StaticResource Body}" Margin="0,4,0,12" Text="Pick the drives, press SCAN, then tick what to delete. Only Windows cache folders and Recycle Bins are listed - never your own files. Recommended items are ticked for you."/>
+                                        <TextBlock Text="DRIVES" Style="{StaticResource Label}" Margin="0,0,0,8"/>
+                                        <WrapPanel x:Name="CleanDrivePanel" Margin="0,0,0,6"/>
+                                        <WrapPanel>
+                                            <Button x:Name="BtnCleanScan" Style="{StaticResource Neon}" Content="SCAN" Margin="0,0,8,8"/>
+                                            <Button x:Name="BtnCleanRec" Style="{StaticResource NeonViolet}" Content="SELECT RECOMMENDED" Margin="0,0,8,8"/>
+                                            <Button x:Name="BtnCleanNone" Style="{StaticResource Neon}" Content="SELECT NONE" Margin="0,0,8,8"/>
+                                            <Button x:Name="BtnCleanSelected" Style="{StaticResource NeonDanger}" Content="CLEAN SELECTED" Margin="0,0,8,8"/>
+                                        </WrapPanel>
+                                        <TextBlock x:Name="CleanHint" Text="Pick the drives, then press SCAN to see what can be cleaned on them." Style="{StaticResource Body}" Margin="0,2,0,10"/>
+                                        <StackPanel x:Name="CleanList"/>
+                                        <TextBlock x:Name="CleanTotal" Text="" Foreground="#E6F1FF" FontSize="12.5" Margin="0,2,0,0"/>
+                                        <TextBlock x:Name="CleanResult" Text="" Foreground="#2BFF9A" FontSize="12" Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                </Border>
                                 <UniformGrid Columns="2">
                                     <Border Style="{StaticResource Card}">
                                         <StackPanel>
-                                            <TextBlock Text="CLEANUP" Style="{StaticResource H2}"/>
-                                            <TextBlock Style="{StaticResource Body}" Margin="0,4,0,12" Text="Temp files, crash dumps, error reports, thumbnail cache, Windows Update downloads, Delivery Optimization cache and the Recycle Bin of the Windows drive. Other drives are never touched."/>
+                                            <TextBlock Text="WINDOWS CLEANUP TOOLS" Style="{StaticResource H2}"/>
+                                            <TextBlock Style="{StaticResource Body}" Margin="0,4,0,12" Text="Windows' own cleaners. DEEP CLEAN removes old update files that Windows keeps in its component store. DISK CLEANUP opens the classic tool."/>
                                             <WrapPanel>
-                                                <Button x:Name="BtnQuickClean" Style="{StaticResource Neon}" Content="QUICK CLEAN" Margin="0,0,8,8"/>
                                                 <Button x:Name="BtnDeepClean" Style="{StaticResource NeonViolet}" Content="DEEP CLEAN (DISM)" Margin="0,0,8,8"/>
                                                 <Button x:Name="BtnCleanMgr" Style="{StaticResource Neon}" Content="DISK CLEANUP" Margin="0,0,8,8"/>
                                             </WrapPanel>
-                                            <TextBlock x:Name="CleanResult" Text="" Foreground="#2BFF9A" FontSize="12"/>
                                         </StackPanel>
                                     </Border>
                                     <Border Style="{StaticResource Card}">
@@ -8053,9 +8428,113 @@ function Update-OzPowerText {
     $Oz.UI.PowerCurrent.Text = T 'Active plan: {0}. PERFORMANCE = max boost, cool idle. SMART = fast + cool (best for laptops). COOL = turbo off, much cooler and quieter.' $Oz.Sys.Power.Name
 }
 
+function Show-OzCleanDrives {
+    # The drive tick boxes of CLEAN UP FILES. Only the Windows drive is ticked at first.
+    $panel = $Oz.UI.CleanDrivePanel
+    if (-not $panel) { return }
+    if ($null -eq $Oz.CleanDrives) { $Oz.CleanDrives = @(Get-OzCleanDrive) }
+    if ($null -eq $Oz.CleanDriveSel) { $Oz.CleanDriveSel = @{} }
+    foreach ($d in $Oz.CleanDrives) { if (-not $Oz.CleanDriveSel.ContainsKey($d.Drive)) { $Oz.CleanDriveSel[$d.Drive] = [bool]$d.IsWindows } }
+    $panel.Children.Clear()
+    if (-not $Oz.CleanDrives.Count) { [void]$panel.Children.Add((New-OzText -Text (T 'No local drives found.') -Size 12.5)); return }
+    foreach ($d in $Oz.CleanDrives) {
+        $cb = New-Object System.Windows.Controls.CheckBox
+        $cb.Style = $Oz.Window.FindResource('Tick')
+        $cb.Tag = $d.Drive
+        $cb.IsChecked = [bool]$Oz.CleanDriveSel[$d.Drive]
+        $cb.Margin = New-OzThickness '0,0,22,8'
+        $sp = New-Object System.Windows.Controls.StackPanel
+        $title = if ($d.IsWindows) { T '{0}  Windows drive' $d.Drive } elseif ($d.Label) { '{0}  {1}' -f $d.Drive, $d.Label } else { T '{0}  Local drive' $d.Drive }
+        [void]$sp.Children.Add((New-OzText -Text $title -Size 13 -Color '#E6F1FF' -Semi))
+        [void]$sp.Children.Add((New-OzText -Text (T '{0:N1} GB free of {1:N1} GB' $d.FreeGB $d.SizeGB) -Size 10.5 -Color '#5D6E92' -Mono))
+        $cb.Content = $sp
+        $cb.Add_Click({ $Oz.CleanDriveSel[[string]$this.Tag] = [bool]$this.IsChecked })
+        [void]$panel.Children.Add($cb)
+    }
+}
+
+function Show-OzCleanList {
+    # The scan result: one block per drive, one tick box per item with its size and folders
+    param($Items, [switch]$KeepChecks)
+    $list = $Oz.UI.CleanList
+    if (-not $list) { return }
+    $keep = @{}
+    if ($KeepChecks) { foreach ($c in @($Oz.CleanChecks)) { if ($c) { $keep[$c.Tag.Key] = [bool]$c.IsChecked } } }
+    $list.Children.Clear()
+    $Oz.CleanChecks = @()
+    $Items = @($Items)
+    $Oz.LastCleanScan = $Items
+    if (-not $Items.Count) {
+        $Oz.UI.CleanHint.Text = T 'Nothing to clean on the drives you picked.'
+        Update-OzCleanTotal
+        return
+    }
+    $Oz.UI.CleanHint.Text = T 'Tick what you want to delete. Recommended items that have something to clean are already ticked.'
+    $win = Get-OzWindowsDrive
+    foreach ($drive in @($Items | ForEach-Object { $_.Drive } | Select-Object -Unique)) {
+        $head = if ($drive -eq $win) { T '{0}  WINDOWS DRIVE' $drive } else { T '{0}  OTHER DRIVE  -  only its Recycle Bin can be emptied here, your files are never listed' $drive }
+        [void]$list.Children.Add((New-OzText -Text $head -Size 11 -Color '#00E5FF' -Display -Semi -Wrap -Margin '0,6,0,8'))
+        foreach ($it in @($Items | Where-Object { $_.Drive -eq $drive })) {
+            $empty = ($it.Bytes -eq 0)
+            $row = New-OzRowBorder -Margin '0,0,0,8'
+            $grid = New-OzColumns @('*', 'Auto', 'Auto')
+            $cb = New-Object System.Windows.Controls.CheckBox
+            $cb.Style = $Oz.Window.FindResource('Tick')
+            $cb.Tag = $it
+            $cb.IsChecked = if ($keep.ContainsKey($it.Key)) { $keep[$it.Key] } else { [bool]$it.Rec -and -not $empty }
+            if ($empty) { $cb.IsChecked = $false; $cb.IsEnabled = $false; $row.Opacity = 0.55 }
+            $cb.Add_Click({ Update-OzCleanTotal })
+            $content = New-Object System.Windows.Controls.StackPanel
+            [void]$content.Children.Add((New-OzText -Text (T $it.Name) -Size 13 -Color '#E6F1FF' -Semi -Wrap))
+            [void]$content.Children.Add((New-OzText -Text (T $it.Desc) -Size 11.5 -Wrap -Margin '0,2,0,0'))
+            $paths = @($it.Paths)
+            if ($paths.Count) {
+                $shown = ($paths | Select-Object -First 3) -join "`n"
+                if ($paths.Count -gt 3) { $shown += "`n" + (T '+{0} more' ($paths.Count - 3)) }
+                [void]$content.Children.Add((New-OzText -Text $shown -Size 10.5 -Color '#5D6E92' -Mono -Wrap -Margin '0,4,0,0'))
+            }
+            foreach ($s in @($it.Skipped)) {
+                if ($s) { [void]$content.Children.Add((New-OzText -Text (T 'Left alone: {0} ({1})' $s.Path (T $s.Why)) -Size 10.5 -Color '#FFB020' -Wrap -Margin '0,4,0,0')) }
+            }
+            $cb.Content = $content
+            Add-OzGridChild $grid $cb 0
+            $sizeText = if ($empty) { T 'nothing to clean' } else { Format-OzBytes $it.Bytes }
+            $size = New-OzText -Text $sizeText -Size 13 -Color $(if ($empty) { '#5D6E92' } else { '#00E5FF' }) -Mono -Semi -Margin '14,0,0,0'
+            $size.VerticalAlignment = 'Top'
+            Add-OzGridChild $grid $size 1
+            if ($it.Rec) {
+                $badge = New-OzBadge (T 'RECOMMENDED') '#B79BFF'
+                $badge.VerticalAlignment = 'Top'
+                Add-OzGridChild $grid $badge 2
+            }
+            $row.Child = $grid
+            [void]$list.Children.Add($row)
+            $Oz.CleanChecks += $cb
+        }
+    }
+    Update-OzCleanTotal
+}
+
+function Update-OzCleanTotal {
+    if (-not $Oz.UI.CleanTotal) { return }
+    if (-not @($Oz.CleanChecks).Count) { $Oz.UI.CleanTotal.Text = ''; return }
+    $sel = @($Oz.CleanChecks | Where-Object { $_.IsChecked } | ForEach-Object { $_.Tag })
+    $bytes = [int64]0
+    foreach ($s in $sel) { if ($s.Bytes -gt 0) { $bytes += $s.Bytes } }
+    $Oz.UI.CleanTotal.Text = T 'Selected: {0} item(s), about {1}' $sel.Count (Format-OzBytes $bytes)
+}
+
+function Set-OzCleanChecks {
+    # SELECT RECOMMENDED / SELECT NONE
+    param([switch]$Recommended)
+    foreach ($c in @($Oz.CleanChecks)) { if ($c.IsEnabled) { $c.IsChecked = [bool]($Recommended -and $c.Tag.Rec) } }
+    Update-OzCleanTotal
+}
+
 function Update-OzCleanText {
     if (-not $Oz.UI.CleanResult) { return }
     $Oz.UI.CleanResult.Text = if ($null -ne $Oz.LastCleanMB) { T 'Last clean freed {0:N0} MB' $Oz.LastCleanMB } else { '' }
+    if ($Oz.UI.CleanHint -and -not $Oz.CleanShown) { $Oz.UI.CleanHint.Text = T 'Pick the drives, then press SCAN to see what can be cleaned on them.' }
 }
 
 function Set-OzPlanTweak {
@@ -8100,6 +8579,8 @@ function Initialize-OzTools {
         [void]$Oz.UI.ShortcutPanel.Children.Add($b)
     }
     Update-OzPowerText
+    Show-OzCleanDrives
+    if ($Oz.CleanShown -and $null -ne $Oz.LastCleanScan) { Show-OzCleanList $Oz.LastCleanScan -KeepChecks }
     Update-OzCleanText
     Update-OzStartupList
 }
@@ -8276,13 +8757,10 @@ function Initialize-OzEvents {
         })
 
     # tools
-    $ui.BtnQuickClean.Add_Click({
-            Invoke-OzSafe 'Quick clean' {
-                $msg = T "Delete temporary files and Windows caches on drive {0}, and empty its Recycle Bin?`n`nOnly Windows cache folders are cleaned. Your own files and your other drives are never touched." (Get-OzWindowsDrive)
-                if ((Show-OzDialog -Text $msg -Buttons YesNo -Kind Question) -ne 'Yes') { return }
-                Invoke-OzQuickClean
-            }
-        })
+    $ui.BtnCleanScan.Add_Click({ Invoke-OzSafe 'Cleanup scan' { Invoke-OzCleanScan } })
+    $ui.BtnCleanRec.Add_Click({ Set-OzCleanChecks -Recommended })
+    $ui.BtnCleanNone.Add_Click({ Set-OzCleanChecks })
+    $ui.BtnCleanSelected.Add_Click({ Invoke-OzSafe 'Cleanup' { Invoke-OzCleanSelected } })
     $ui.BtnDeepClean.Add_Click({ Start-OzConsole 'Ozzyhn - DISM component cleanup' 'dism /online /cleanup-image /startcomponentcleanup' })
     $ui.BtnCleanMgr.Add_Click({ Start-Process 'cleanmgr.exe' })
     $ui.BtnSfc.Add_Click({ Start-OzConsole 'Ozzyhn - Windows repair' 'dism /online /cleanup-image /restorehealth & sfc /scannow' })

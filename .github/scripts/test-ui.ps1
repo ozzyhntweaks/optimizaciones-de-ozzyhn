@@ -3,6 +3,8 @@
       - waits for the hardware scan and tweak detection
       - opens every page, at normal size and at the size of a cheap 1366x768 laptop at 125% scaling
       - switches to Spanish and back, presses Ctrl+F, opens the dialogs and the results card
+      - scans for files to clean on the TOOLS page and ticks items (nothing is deleted: the
+        confirmation is answered NO)
       - shows the Games page with a test game whose settings file is known
     Fails on any error the app logs, any unhandled UI exception, or a menu that does not fit.
     With -Shots, saves a PNG of every step to that folder.
@@ -113,6 +115,36 @@ if ($Oz.UI.NavProfileCard.Visibility -ne 'Collapsed') { Fail 'laptop size: the p
 Set-Size 1320 840
 if ($Oz.UI.NavProfileCard.Visibility -ne 'Visible') { Fail 'normal size: the profile card in the menu should be shown' }
 
+# ---------- CLEAN UP FILES on the Tools page (scan only, nothing is deleted) ----------
+$Oz.UI.NavTools.IsChecked = $true
+Wait-Ui 300
+$driveBoxes = @($Oz.UI.CleanDrivePanel.Children | Where-Object { $_ -is [System.Windows.Controls.CheckBox] })
+if ($driveBoxes.Count -ge 1 -and @($driveBoxes | Where-Object IsChecked).Count -eq 1) { Pass "cleanup: $($driveBoxes.Count) drive(s) listed, only the Windows drive ticked" }
+else { Fail "cleanup: $($driveBoxes.Count) drive boxes, $(@($driveBoxes | Where-Object IsChecked).Count) ticked" }
+Invoke-OzSafe 'Cleanup scan' { Invoke-OzCleanScan }
+Wait-Idle 120
+$cleanCount = @($Oz.CleanChecks).Count
+if ($cleanCount -ge 2) { Pass "cleanup: scan lists $cleanCount items" } else { Fail "cleanup: scan listed $cleanCount items" }
+if (@($Oz.CleanChecks | Where-Object { $_.IsChecked -and -not $_.Tag.Rec }).Count) { Fail 'cleanup: an item that is not recommended was ticked by the scan' }
+Set-OzCleanChecks
+if (@($Oz.CleanChecks | Where-Object IsChecked).Count) { Fail 'cleanup: SELECT NONE left items ticked' }
+Set-OzCleanChecks -Recommended
+$recTicked = @($Oz.CleanChecks | Where-Object IsChecked)
+if (@($recTicked | Where-Object { -not $_.Tag.Rec }).Count) { Fail 'cleanup: SELECT RECOMMENDED ticked an item that is not recommended' }
+else { Pass "cleanup: SELECT NONE / SELECT RECOMMENDED ($($recTicked.Count) ticked): $($Oz.UI.CleanTotal.Text)" }
+Save-Shot 'tools-cleanup' $Oz.UI.PageTools
+Set-Size 1093 574
+Save-Shot 'laptop-tools-cleanup' $Oz.UI.PageTools
+Set-Size 1320 840
+Set-OzLanguage 'es'
+Wait-Ui 300
+if (@($Oz.CleanChecks).Count -ne $cleanCount) { Fail "cleanup: Spanish shows $(@($Oz.CleanChecks).Count) items instead of $cleanCount" }
+elseif ($Oz.UI.BtnCleanSelected.Content -ne 'LIMPIAR SELECCIONADOS') { Fail "cleanup: Spanish button says '$($Oz.UI.BtnCleanSelected.Content)'" }
+else { Pass 'cleanup: Spanish list and buttons' }
+Save-Shot 'es-tools-cleanup' $Oz.UI.PageTools
+Set-OzLanguage 'en'
+Wait-Ui 300
+
 # ---------- Ctrl+F ----------
 $Oz.UI.NavDash.IsChecked = $true
 Wait-Ui 200
@@ -151,8 +183,19 @@ $closer.Start()
 $r = Show-OzDialog -Text 'Test question with a long line of text so the wrapping can be seen in the picture.' -Buttons YesNoCancel -Kind Question -Labels @('APPLY NOW', 'SHOW ME FIRST', 'CANCEL')
 if ($r -ne 'No') { Fail "Dialog returned '$r' instead of 'No'" }
 Show-OzResults -Total 12 -Ok 11 -Fail 1 -Blocked @('Example tweak') -Reboot $true -ActiveBefore 10
+# CLEAN SELECTED asks first; the answer here is NO, so nothing is deleted
+$expect = 2
+$pick = @($Oz.CleanChecks | Where-Object { $_.IsEnabled }) | Select-Object -First 1
+if ($pick) {
+    $pick.IsChecked = $true
+    $probe = Join-Path $env:SystemRoot 'Temp\oz-ui-probe.tmp'
+    Set-Content -LiteralPath $probe -Value 'probe'
+    Invoke-OzSafe 'Cleanup' { Invoke-OzCleanSelected }
+    $expect = 3
+    if (Test-Path -LiteralPath $probe) { Pass 'cleanup: answering NO deletes nothing' } else { Fail 'cleanup: files were deleted after answering NO' }
+}
 $closer.Stop()
-if ($script:DialogSeen.Count -eq 2) { Pass 'themed dialog and results card' } else { Fail "Expected 2 dialogs, saw $($script:DialogSeen.Count)" }
+if ($script:DialogSeen.Count -eq $expect) { Pass "themed dialogs and results card ($expect)" } else { Fail "Expected $expect dialogs, saw $($script:DialogSeen.Count)" }
 
 # ---------- Games page with a test game ----------
 $cfg = Join-Path $work 'videoconfig.txt'

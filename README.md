@@ -60,7 +60,7 @@ Then start the file you checked from PowerShell as Administrator: `powershell -E
 | **Profiles** | One click, resolved for this PC: **Auto-Tune**, **Revive Cheap PC**, **Max Performance**, **Cool & Quiet**, **Competitive Gaming**, **Privacy Max**, **Clean Windows UI**. *Preview* stages the changes for review; *Apply* does it now. |
 | **Debloat** | Lists only the bloat that is actually installed (66 known packages), with recommended ones pre-selected. Core apps (Store, Calculator, Notepad, Terminal, Security) are protected and never shown. Also includes the official Edge uninstall where Microsoft allows it. |
 | **Drivers** | Official download links for the detected NVIDIA / AMD / Intel GPU, the chipset, the laptop or board maker and the network adapter. It also lists devices with missing drivers and the age of key drivers, and links to NVCleanstall and DDU for clean GPU installs. |
-| **Tools** | Quick clean, DISM component cleanup, DISM + SFC repair, network stack reset, disk scan, DNS switcher (Cloudflare, Google, Quad9, AdGuard), three custom power plans, battery report, CompactOS for tiny eMMC drives, a startup app manager and shortcuts to the classic panels. |
+| **Tools** | **Clean up files**: pick the drives, scan, see each item with its size and folders, and tick what to delete (recommended items come ticked). DISM component cleanup, DISM + SFC repair, network stack reset, disk scan, DNS switcher (Cloudflare, Google, Quad9, AdGuard), three custom power plans, battery report, CompactOS for tiny eMMC drives, a startup app manager and shortcuts to the classic panels. |
 | **Backup & Undo** | Automatic System Restore point, an **undo journal** that records the original value of everything changed, one-click revert per tweak or *Revert everything*, and export or import of your setup. |
 
 ### Tweak categories
@@ -101,7 +101,7 @@ Undervolting and BIOS settings (XMP / EXPO, fan curves) cannot be changed safely
 
 **Why is my temperature "N/A"?** Many motherboards hide their sensors from Windows. Use HWiNFO for exact readings. Everything else still works.
 
-**Does Quick clean touch my other drives?** No. It only cleans Windows cache folders on the Windows drive (usually C:), never follows links, and only empties that drive's Recycle Bin. Your own files are never part of it.
+**Can cleaning delete my own files or other drives?** No. *Clean up files* only lists Windows cache folders on the Windows drive (usually C:) and the Recycle Bin of the drives you pick. Nothing is deleted until you tick it and confirm, links are never followed, and your own files are never listed.
 
 **Does it work in Spanish (or any language) Windows?** Yes. All detection is language-independent.
 
@@ -109,7 +109,7 @@ Undervolting and BIOS settings (XMP / EXPO, fan curves) cannot be changed safely
 
 ## What's new
 
-**1.2.1:** important fix: **Quick clean** no longer follows links to other drives, only empties the Windows drive's Recycle Bin, and asks before it starts. **1.2.0:** new **Games** page (competitive settings, settings-file check and launch options for six shooters), the window fits small laptop screens, neon pop-ups, a results card after applying, and Ctrl+F search. **1.1.2:** the double-click launcher always runs the newest release, and every tweak is tested on real Windows (apply, check, revert, check) before each release. **1.1.1:** security fix for the data folder, and launching from Releases. Full history in [CHANGELOG.md](CHANGELOG.md).
+**1.3.0:** **Clean up files** replaces Quick clean: pick drives, scan, and choose exactly what to delete, with sizes and folders shown and recommended items pre-ticked. **1.2.1:** important fix: **Quick clean** no longer follows links to other drives, only empties the Windows drive's Recycle Bin, and asks before it starts. **1.2.0:** new **Games** page (competitive settings, settings-file check and launch options for six shooters), the window fits small laptop screens, neon pop-ups, a results card after applying, and Ctrl+F search. **1.1.2:** the double-click launcher always runs the newest release, and every tweak is tested on real Windows (apply, check, revert, check) before each release. **1.1.1:** security fix for the data folder, and launching from Releases. Full history in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

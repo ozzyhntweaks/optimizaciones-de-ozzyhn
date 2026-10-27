@@ -2,6 +2,18 @@
 
 Each release on the [Releases page](https://github.com/ozzyhntweaks/optimizaciones-de-ozzyhn/releases) uses its section below as release notes. To release: add a section for the new version at the top, set `$Oz.Version` in `ozzyhn.ps1` to match, and push to `main`.
 
+## 1.3.0
+
+* **CLEAN UP FILES replaces QUICK CLEAN** (TOOLS page). Nothing is deleted until you choose it:
+  1. Tick the drives to look at. Only the Windows drive is ticked at first. Network drives are never listed.
+  2. Press **SCAN**. Every item shows its size and the exact folders it would empty, grouped by drive. Scanning only reads; it deletes nothing.
+  3. Recommended items that have something to clean come ticked. **SELECT RECOMMENDED** and **SELECT NONE** change them all at once, and the total updates as you tick.
+  4. **CLEAN SELECTED** lists what will be deleted and asks first. Afterwards the app scans again, so you see what was freed.
+* What can be listed: your temp folder, Windows temp, Windows Update downloads, Delivery Optimization cache, thumbnail cache, crash dumps, error reports, the legacy web cache, servicing logs, and graphics shader caches (DirectX, NVIDIA, AMD, Intel; not ticked by default, since games rebuild them and can stutter on the first launch). All of these are Windows folders on the Windows drive.
+* On other drives, only the **Recycle Bin** is offered, never ticked by default, and only for drives you picked. Your own files are never listed anywhere.
+* Every folder is checked when it is measured and again right before it is emptied, with the same rules as 1.2.1: Windows drive only, no whole drives, no personal or system folders, no links. Anything left alone is shown under its item with the reason.
+* New automatic tests on real Windows: measuring and cleaning around junctions and symbolic links, a scan that must not delete anything, cleaning that refuses a folder turned into a link, and emptying the Windows drive's Recycle Bin while a second drive's Recycle Bin stays as it was. The UI test runs a scan, ticks items in English and Spanish, and answers NO to the confirmation.
+
 ## 1.2.1
 
 * **Important fix: QUICK CLEAN could delete files on other drives.** If a folder it cleans held a link (a junction or symbolic link) to a folder on another drive, Windows PowerShell followed the link and deleted the files at the other end. It also trusted the TEMP setting even when it pointed at another drive, and it emptied the Recycle Bin of every drive. Now:
