@@ -3334,10 +3334,13 @@ FormatLocale=#Locale#
 RegExpSubstitute=1
 Substitute="\.":""
 
+; 12-hour time is written as "h:mm HH" and the hour after the space becomes AM / PM from Strings.inc:
+; Windows leaves %p empty for some Spanish regions, so it is not used
 [mTime]
 Measure=Time
 Format=#TimeFmt#
-FormatLocale=#Locale#
+RegExpSubstitute=1
+Substitute="^(\S+) (0\d|1[01])$":"\1 #S_AM#","^(\S+) (1[2-9]|2[0-3])$":"\1 #S_PM#"
 
 [mHM]
 Measure=Time
@@ -3345,8 +3348,9 @@ Format=#TimeShort#
 
 [mAmPm]
 Measure=Time
-Format=%p
-FormatLocale=#Locale#
+Format=%H
+RegExpSubstitute=1
+Substitute="^(0\d|1[01])$":"#S_AM#","^(1[2-9]|2[0-3])$":"#S_PM#"
 
 [mHH]
 Measure=Time
@@ -3855,7 +3859,7 @@ ActVolUp=[!CommandMeasure mVol "ChangeVolume 2"]
 ActVolDown=[!CommandMeasure mVol "ChangeVolume -2"]
 
 ; ---------------- measures ----------------
-; date without the dots of short month names ("oct."), time as Windows writes it ("p. m.")
+; date without the dots of short month names ("oct."); 12-hour time gets AM / PM from Strings.inc
 [mBarDate]
 Measure=Time
 Format=%d %b
@@ -3866,7 +3870,8 @@ Substitute="\.":""
 [mClock]
 Measure=Time
 Format=#BarTimeFmt#
-FormatLocale=#Locale#
+RegExpSubstitute=1
+Substitute="^(\S+) (0\d|1[01])$":"\1 #S_AM#","^(\S+) (1[2-9]|2[0-3])$":"\1 #S_PM#"
 
 [mDayShort]
 Measure=Time
@@ -4738,6 +4743,7 @@ $Oz.ThemeWords = @{
         S_IndexFailed = 'The pictures could not be read. Check that PowerShell can run, then press the refresh button.'
         S_G1Morning = 'GOOD'; S_G2Morning = 'MORNING'; S_G1Afternoon = 'GOOD'; S_G2Afternoon = 'AFTERNOON'
         S_G1Evening = 'GOOD'; S_G2Evening = 'EVENING'; S_G1Night = 'GOOD'; S_G2Night = 'NIGHT'
+        S_AM = 'AM'; S_PM = 'PM'
         S_Mon = 'Mon'; S_Tue = 'Tue'; S_Wed = 'Wed'; S_Thu = 'Thu'; S_Fri = 'Fri'; S_Sat = 'Sat'; S_Sun = 'Sun'
     }
     es = [ordered]@{
@@ -4749,6 +4755,7 @@ $Oz.ThemeWords = @{
         S_IndexFailed = 'No se pudieron leer las im&aacute;genes. Comprueba que PowerShell pueda ejecutarse y pulsa el bot&oacute;n de actualizar.'
         S_G1Morning = 'BUENOS'; S_G2Morning = 'D&Iacute;AS'; S_G1Afternoon = 'BUENAS'; S_G2Afternoon = 'TARDES'
         S_G1Evening = 'BUENAS'; S_G2Evening = 'NOCHES'; S_G1Night = 'BUENAS'; S_G2Night = 'NOCHES'
+        S_AM = 'a. m.'; S_PM = 'p. m.'
         S_Mon = 'lun'; S_Tue = 'mar'; S_Wed = 'mi&eacute;'; S_Thu = 'jue'; S_Fri = 'vie'; S_Sat = 's&aacute;b'; S_Sun = 'dom'
     }
 }
@@ -5031,7 +5038,7 @@ function New-OzThemeFiles {
     $lang = if ($Oz.Lang -eq 'es') { 'es' } else { 'en' }
     $hasBat = [bool]($Oz.Sys -and $Oz.Sys.Battery -and $Oz.Sys.Battery.Present)
     $date = $Oz.ThemeDateFormats[[int]$Cfg.DateFmt].Rm
-    $time = if ($Cfg.Hour24) { '%H:%M' } else { '%#I:%M %p' }
+    $time = if ($Cfg.Hour24) { '%H:%M' } else { '%#I:%M %H' }
     $folders = @($Cfg.WallFolders)
     $files = [ordered]@{}
 
@@ -5046,7 +5053,7 @@ function New-OzThemeFiles {
     & $line 'TimeShort' $(if ($Cfg.Hour24) { '%H:%M' } else { '%#I:%M' })
     & $line 'PulseInfo' $(if ($Cfg.Hour24) { '%1  [\x00B7]  %2' } else { '%1  [\x00B7]  %2  [\x00B7]  %3' })
     & $line 'DateFmt' $date
-    & $line 'BarTimeFmt' $(if ($Cfg.Hour24) { '%H:%M:%S' } else { '%#I:%M:%S %p' })
+    & $line 'BarTimeFmt' $(if ($Cfg.Hour24) { '%H:%M:%S' } else { '%#I:%M:%S %H' })
     foreach ($p in 'PosX', 'PosY', 'AnchorX', 'AnchorY', 'Align', 'AlignK') { & $line $p $place.$p }
     & $line 'AutoInk' $(if ($Cfg.AutoInk) { 1 } else { 0 })
     & $line 'NoAutoInk' $(if ($Cfg.AutoInk) { 0 } else { 1 })
