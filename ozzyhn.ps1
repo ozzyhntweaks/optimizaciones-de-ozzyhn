@@ -384,6 +384,10 @@ function Start-OzWorker {
     param([scriptblock]$ScriptBlock, [object[]]$ArgumentList = @())
     $ps = [powershell]::Create()
     $ps.RunspacePool = Get-OzPool
+    # Background work gives way to the window: on a PC with one or two slow cores the window then
+    # still answers at once while a scan runs (the scan takes a little longer instead)
+    [void]$ps.AddScript('[System.Threading.Thread]::CurrentThread.Priority = [System.Threading.ThreadPriority]::BelowNormal')
+    [void]$ps.AddStatement()
     # Re-parse the text so the block is not tied to the UI runspace
     [void]$ps.AddScript($ScriptBlock.ToString())
     foreach ($a in $ArgumentList) { [void]$ps.AddArgument($a) }
@@ -9232,6 +9236,18 @@ AJUSTE DE LA IMAGEN
 
 {0} screen(s) connected.
 {0} pantalla(s) conectada(s).
+
+Light visuals on ({0}): no title bar animation or button glow, so the window stays quick.
+Efectos ligeros activados ({0}): sin animaci&oacute;n en la barra de t&iacute;tulo ni brillo en los botones, para que la ventana siga r&aacute;pida.
+
+no graphics acceleration
+sin aceleraci&oacute;n gr&aacute;fica
+
+Windows animations are off
+las animaciones de Windows est&aacute;n desactivadas
+
+entry-level PC
+PC de gama de entrada
 '@
 #endregion
 
@@ -9332,6 +9348,7 @@ $Oz.Xaml = @'
         </Style>
 
         <!-- Buttons -->
+        <DropShadowEffect x:Key="PrimaryGlow" Color="#FF2BD6" BlurRadius="22" ShadowDepth="0" Opacity="0.85"/>
         <Style x:Key="Neon" TargetType="Button">
             <Setter Property="Foreground" Value="#00E5FF"/>
             <Setter Property="Background" Value="#0F00E5FF"/>
@@ -9390,11 +9407,8 @@ $Oz.Xaml = @'
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Effect">
-                                    <Setter.Value>
-                                        <DropShadowEffect Color="#FF2BD6" BlurRadius="22" ShadowDepth="0" Opacity="0.85"/>
-                                    </Setter.Value>
-                                </Setter>
+                                <!-- a resource, so the light visual mode can turn the glow off -->
+                                <Setter TargetName="Bd" Property="Effect" Value="{DynamicResource PrimaryGlow}"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Bd" Property="Opacity" Value="0.85"/>
@@ -9748,7 +9762,7 @@ $Oz.Xaml = @'
                 <Rectangle Fill="{StaticResource GridBrush}" Opacity="0.55"/>
                 <Rectangle Fill="{StaticResource BgGlow}"/>
                 <Rectangle Fill="{StaticResource BgGlow2}"/>
-                <Rectangle Opacity="0.045">
+                <Rectangle x:Name="BgWatermark" Opacity="0.045">
                     <Rectangle.Fill>
                         <VisualBrush TileMode="Tile" Viewport="0,0,480,240" ViewportUnits="Absolute" Viewbox="0,0,480,240" ViewboxUnits="Absolute" Stretch="None">
                             <VisualBrush.Visual>
@@ -9763,7 +9777,7 @@ $Oz.Xaml = @'
                         </VisualBrush>
                     </Rectangle.Fill>
                 </Rectangle>
-                <Viewbox Width="520" Height="520" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-110,-130" Opacity="0.07">
+                <Viewbox x:Name="BgMark" Width="520" Height="520" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-110,-130" Opacity="0.07">
                     <Canvas Width="100" Height="100">
                         <Path Data="{StaticResource OzHex}" Stroke="{StaticResource NeonGrad}" StrokeThickness="4" StrokeLineJoin="Round"/>
                         <Path Data="{StaticResource OzMark}" Fill="{StaticResource NeonGrad}"/>
@@ -9788,7 +9802,7 @@ $Oz.Xaml = @'
                     <StackPanel Orientation="Horizontal" Margin="18,0,0,0" VerticalAlignment="Center">
                         <Viewbox Width="32" Height="32">
                             <Canvas Width="100" Height="100">
-                                <Path Data="{StaticResource OzHex}" Stroke="#00E5FF" StrokeThickness="16" StrokeLineJoin="Round" Opacity="0.15">
+                                <Path x:Name="LogoPulse" Data="{StaticResource OzHex}" Stroke="#00E5FF" StrokeThickness="16" StrokeLineJoin="Round" Opacity="0.15">
                                     <Path.Triggers>
                                         <EventTrigger RoutedEvent="FrameworkElement.Loaded">
                                             <BeginStoryboard>
@@ -9839,7 +9853,7 @@ $Oz.Xaml = @'
                     <!-- neon sweep -->
                     <Grid Grid.ColumnSpan="3" VerticalAlignment="Bottom" Height="1" ClipToBounds="True" IsHitTestVisible="False">
                         <Rectangle Fill="#1B2A48"/>
-                        <Rectangle Width="260" HorizontalAlignment="Left">
+                        <Rectangle x:Name="TitleSweep" Width="260" HorizontalAlignment="Left">
                             <Rectangle.Fill>
                                 <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
                                     <GradientStop Color="#0000E5FF" Offset="0"/>
@@ -10718,6 +10732,34 @@ function Get-OzBothLang {
     $v = $null
     $es = if ($Oz.Es.TryGetValue($Text, [ref]$v) -and $v) { [System.Net.WebUtility]::HtmlDecode($v) } else { '' }
     '{0} {1}' -f $Text, $es
+}
+
+function Test-OzLightVisuals {
+    # Why the light visual mode is used ('' = not used): Windows draws without a graphics card
+    # (old or missing driver, remote desktop, virtual PC), Windows animations are turned off, or the
+    # hardware scan found a CHEAP PC
+    if (([System.Windows.Media.RenderCapability]::Tier -shr 16) -eq 0) { return 'no graphics acceleration' }
+    if (-not [System.Windows.SystemParameters]::ClientAreaAnimation) { return 'Windows animations are off' }
+    if ($Oz.Sys -and $Oz.Sys.Score -and $Oz.Sys.Score.TierKey -eq 'CHEAP') { return 'entry-level PC' }
+    ''
+}
+
+function Set-OzLightVisuals {
+    # Light visual mode: no animation that keeps redrawing the title bar, no glow on the big buttons,
+    # and a plainer background, so a slow PC spends its time on what you click. Same layout and colors.
+    param([string]$Why)
+    if ($Oz.LightVisuals -or -not $Oz.Window) { return }
+    $Oz.LightVisuals = $true
+    $ui = $Oz.UI
+    if ($ui.LogoPulse) { $ui.LogoPulse.Triggers.Clear(); $ui.LogoPulse.BeginAnimation([System.Windows.UIElement]::OpacityProperty, $null); $ui.LogoPulse.Opacity = 0.18 }
+    if ($ui.TitleSweep) {
+        $ui.TitleSweep.Triggers.Clear()
+        if ($ui.TitleSweep.RenderTransform -is [System.Windows.Media.TranslateTransform]) { $ui.TitleSweep.RenderTransform.BeginAnimation([System.Windows.Media.TranslateTransform]::XProperty, $null) }
+        $ui.TitleSweep.Visibility = 'Collapsed'
+    }
+    foreach ($n in 'BgWatermark', 'BgMark') { if ($ui[$n]) { $ui[$n].Visibility = 'Collapsed' } }
+    if ($Oz.Window.Resources.Contains('PrimaryGlow')) { $Oz.Window.Resources.Remove('PrimaryGlow') }
+    Write-OzLog (T 'Light visuals on ({0}): no title bar animation or button glow, so the window stays quick.' (T $Why)) 'INFO'
 }
 
 function Set-OzWindowIcon {
@@ -13690,7 +13732,6 @@ function Invoke-OzScan {
     }
     $wSlow = Start-OzWorker -ArgumentList @(, $slow) -ScriptBlock { param($list) [void](Get-OzEthernetPowerProps); Get-OzAllStates $list }
     $wFast = Start-OzWorker -ArgumentList @(, $fast) -ScriptBlock { param($list) Get-OzAllStates $list }
-    Start-OzWallPrefetch
     Step-OzProfile 'scan: workers started'
 
     if (-not $Rescan) { Initialize-OzTweakList }
@@ -13698,11 +13739,13 @@ function Invoke-OzScan {
 
     $hw = Wait-OzWorker $wHw (T 'Scanning hardware...')
     Step-OzProfile 'scan: waited for the hardware scan'
+    Start-OzWallPrefetch
     $sys = @($hw | Where-Object { $_.PSObject.Properties['OS'] }) | Select-Object -First 1
     $dnsObj = @($hw | Where-Object { $_.PSObject.Properties['Kind'] -and $_.Kind -eq 'Dns' }) | Select-Object -First 1
     if (-not $sys) { throw (T 'The hardware scan did not return a result.') }
     $Oz.Sys = $sys
     if ($dnsObj) { $Oz.DnsNow = [string]$dnsObj.Value }
+    if (-not $Oz.LightVisuals) { $why = Test-OzLightVisuals; if ($why) { Set-OzLightVisuals $why } }
     Update-OzDashboard
     Step-OzProfile 'scan: dashboard'
     $s = $Oz.Sys
@@ -13750,6 +13793,9 @@ function Initialize-OzWindow {
     # Builds the main window and wires every control. Used by Start-Ozzyhn and by the CI UI test,
     # so the test opens exactly the window users get.
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+    # The window's thread goes first when the CPU is busy (background work runs below normal), so on
+    # a PC with one or two slow cores clicks and drawing are not held up by the scans
+    try { [System.Threading.Thread]::CurrentThread.Priority = [System.Threading.ThreadPriority]::AboveNormal } catch { }
     $Oz.ResCache = @{}
     $Oz.Window = [Windows.Markup.XamlReader]::Parse($Oz.Xaml)
     foreach ($m in [regex]::Matches($Oz.Xaml, 'x:Name="(\w+)"')) {
@@ -13765,6 +13811,8 @@ function Initialize-OzWindow {
     Set-OzLanguage $Oz.Lang
     Initialize-OzEvents
     $Oz.Timer.Start()
+    $why = Test-OzLightVisuals
+    if ($why) { Set-OzLightVisuals $why }
     Start-OzPool
 }
 
