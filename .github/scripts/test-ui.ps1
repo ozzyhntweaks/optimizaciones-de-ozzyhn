@@ -167,6 +167,42 @@ foreach ($k in 'ACTIVE', 'RECOMMENDED', 'ALL') { Measure-Click "TWEAKS chip $k" 
 foreach ($q in 'p', 'po', 'pow', 'powe', 'power', '') { Measure-Click "TWEAKS search '$q'" { $Oz.UI.TweakSearch.Text = $q } }
 Measure-Click 'language ES' { $Oz.UI.LangEs.IsChecked = $true }
 Measure-Click 'language EN' { $Oz.UI.LangEn.IsChecked = $true }
+# Where the time goes: each part on its own (window's thread, no waiting)
+function Measure-Part([string]$Name, [scriptblock]$Do) {
+    Wait-Ui 50
+    $sw = [Diagnostics.Stopwatch]::StartNew()
+    & $Do
+    $sw.Stop()
+    $script:Speed.Add([pscustomobject]@{ Step = "part: $Name"; Freeze = [int]$sw.Elapsed.TotalMilliseconds; Done = [int]$sw.Elapsed.TotalMilliseconds; Budget = 0 })
+}
+$Oz.UI.NavThemes.IsChecked = $true
+Wait-Ui 300
+Measure-Part 'THEMES status' { Update-OzThemeStatus }
+Measure-Part 'THEMES looks' { Show-OzThemeLooks }
+Measure-Part 'THEMES widgets' { Show-OzThemeWidgets }
+Measure-Part 'THEMES clock panel' { Show-OzThemeClockPanel }
+Measure-Part 'THEMES walls' { Show-OzThemeWalls; Show-OzThemeWallFit }
+Measure-Part 'THEMES dock apps' { Show-OzThemeDock }
+Measure-Part 'THEMES bar and dock' { Show-OzThemeBarDock }
+Measure-Part 'THEMES screen list' { $Oz.ThemeScreens = @(Get-OzScreens) }
+Measure-Part 'THEMES screens card' { Show-OzThemeScreens }
+Measure-Part 'THEMES preview' { Update-OzThemePreview }
+Measure-Part 'THEMES preview, new wallpaper' { $Oz.ThemeLumaKey = $null; $Oz.ThemeLumaReads = $null; $Oz.ThemePreviewKey = $null; $Oz.WallPrefetch = $null; Update-OzThemePreview }
+Measure-Part 'THEMES whole page' { Show-OzThemes }
+Measure-Part 'THEMES whole page + layout' { Show-OzThemes; $win.UpdateLayout() }
+Measure-Part 'lang: window texts' { foreach ($x in @($Oz.XamlTexts)) { try { $x.El.($x.Prop) = T $x.En } catch { } } }
+Measure-Part 'lang: dashboard' { Update-OzDashboard }
+Measure-Part 'lang: tweak rows' { foreach ($row in @($Oz.Rows.Values)) { Set-OzRowText $row; Set-OzRowBadges $row; Set-OzRowVisual $row } }
+Measure-Part 'lang: profiles' { Initialize-OzProfileCards }
+Measure-Part 'lang: tools' { Initialize-OzTools }
+Measure-Part 'lang: games' { Show-OzGames $Oz.LastGames -Quiet }
+Measure-Part 'lang: drivers' { Show-OzDriverRecs; if ($Oz.LastDriverScan) { Show-OzDriverScan $Oz.LastDriverScan -Quiet } }
+Measure-Part 'lang: debloat' { if ($null -ne $Oz.LastBloat) { Show-OzBloat $Oz.LastBloat } }
+Measure-Part 'lang: journal' { $Oz.JournalViewSig = $null; Update-OzJournalView }
+Measure-Part 'startup: rows from state' { foreach ($row in @($Oz.Rows.Values)) { Set-OzRowFromState $row } }
+Measure-Part 'startup: filter + counts' { Update-OzPendingBar; Update-OzActiveCount; Update-OzFilter }
+$Oz.UI.NavDash.IsChecked = $true
+Wait-Ui 300
 $meter.Stop()
 $speedLines = @('Speed in ms. Freeze = longest time the window did not answer. Done = until everything finished.') +
     @($script:Speed | ForEach-Object { '{0,-34} freeze {1,6}   done {2,6}' -f $_.Step, $_.Freeze, $_.Done })

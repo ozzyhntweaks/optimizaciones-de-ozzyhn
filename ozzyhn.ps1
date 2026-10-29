@@ -19,7 +19,8 @@
        - One-click profiles, debloat, driver recommendations, cleanup,
          repair tools, startup manager, restore points and a full undo log.
        - Rainmeter desktop themes (clock that matches your wallpaper, status
-         bar, dock, wallpaper picker). Rainmeter itself is never downloaded.
+         bar, dock, wallpaper picker) on the screens you pick. Rainmeter itself
+         is never downloaded.
        - English / Espanol interface.
 
      Made by OZZYHN TWEAKS - https://github.com/ozzyhntweaks
@@ -28,7 +29,7 @@
 
 #region ============================ STATE ============================
 $Oz = [hashtable]::Synchronized(@{})
-$Oz.Version   = '1.4.1'
+$Oz.Version   = '1.5.0'
 $Oz.AppName   = 'Optimizaciones de Ozzyhn'
 $Oz.Brand     = 'OZZYHN TWEAKS'
 $Oz.RepoOwner = 'ozzyhntweaks'
@@ -5203,7 +5204,7 @@ function Get-OzThemeCopies {
     if ($null -eq $Screens) { $Screens = Get-OzScreens }
     $out = @([pscustomobject]@{ Part = 'Clock'; Config = 'OZZYHN\Clock'; Folder = 'Clock'; File = ('{0}.ini' -f $Cfg.Style); At = (Resolve-OzThemeScreens $Cfg.ScreenClock $Screens)[0]; On = [bool]$Cfg.Clock })
     foreach ($part in 'Bar', 'Dock') {
-        $ats = @(Resolve-OzThemeScreens $Cfg["Screen$part"] $Screens -AllowAll)
+        $ats = Resolve-OzThemeScreens $Cfg["Screen$part"] $Screens -AllowAll
         for ($k = 0; $k -lt $ats.Count; $k++) {
             $folder = if ($k) { '{0}{1}' -f $part, ($k + 1) } else { $part }
             $out += [pscustomobject]@{ Part = $part; Config = "OZZYHN\$folder"; Folder = $folder; File = "$part.ini"; At = $ats[$k]; On = [bool]$Cfg[$part]; Copy = $k }
@@ -12501,7 +12502,13 @@ function Set-OzThemeValue {
     $Oz.ThemeCfg[$Key] = $Value
     $Oz.ThemeDirty = $true
     if ($Key -in 'AutoInk', 'InkMode') { Show-OzThemeClockPanel }
-    if ($Key -eq 'Look') { Sync-OzThemeChips $Oz.UI.ThemeLookPanel 'Look' }
+    # chips show the value even when it was set from code (the tests, a language switch...)
+    $chipPanel = switch -Wildcard ($Key) {
+        'Look' { 'ThemeLookPanel' } 'WallFit' { 'ThemeWallFitPanel' } 'Screen*' { 'ThemeScreenPanel' }
+        { $_ -in 'DockSize', 'BgStyle' } { 'ThemeBarDockPanel' }
+        { $_ -in 'Style', 'Pos', 'Scale', 'DateFmt', 'InkMode', 'InkFixed' } { 'ThemeClockPanel' }
+    }
+    if ($chipPanel) { Sync-OzThemeChips $Oz.UI[@($chipPanel)[0]] $Key }
     if ($Key -in 'ScreenClock', 'ScreenBar', 'ScreenDock', 'Clock', 'Bar', 'Dock') { Show-OzThemeScreenMap }
     Request-OzThemePreview
     Update-OzThemeButtons

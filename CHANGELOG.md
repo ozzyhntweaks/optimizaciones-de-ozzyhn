@@ -2,6 +2,23 @@
 
 Each release on the [Releases page](https://github.com/ozzyhntweaks/optimizaciones-de-ozzyhn/releases) uses its section below as release notes. To release: add a section for the new version at the top, set `$Oz.Version` in `ozzyhn.ps1` to match, and push to `main`. Only the newest release stays on the Releases page; older ones are removed when a new one is published, and their notes stay here.
 
+## 1.5.0
+
+* **The window is smooth again.** 1.4 made clicking through the pages slow, most of all THEMES. Now:
+  * **Pages open at once.** A page is shown first and filled right after it is drawn, so a click in the menu never waits for a scan or a list. Opening THEMES again, or BACKUP & UNDO with many changes in it, no longer rebuilds everything.
+  * **No more stutter while the app works.** While a scan runs (at startup, DRIVERS, DEBLOAT, GAMES...) the window keeps answering at full speed: hover, scrolling and clicks no longer wait for it.
+  * **THEMES follows every click right away.** The wallpaper is read once per spot and much faster, a fast series of clicks redraws the preview once, and the wallpaper is decoded in the background after startup, so the first visit to THEMES opens quickly too.
+  * The GAMES page reads the installed programs in the background, and switching EN / ES no longer scans the games again.
+  * Every control the app draws is made with less overhead, so all pages, the tweak list and the language switch are faster.
+  * A page opened while the startup scan is still running (GAMES, TOOLS, DRIVERS, DEBLOAT) fills itself as soon as the scan ends, instead of staying empty until you click it again.
+* **New on THEMES: pick the screen.** A new SCREENS card shows your screens as they are placed and lets you choose the screen for the **clock**, the **status bar** and the **dock**. The status bar and the dock can also go on **every screen** at once. **IDENTIFY** shows each screen's number on it for a few seconds, like Windows does. A screen that is unplugged later falls back to the main screen. The preview shows the clock's screen with its own shape.
+* **More THEMES options** (new STATUS BAR AND DOCK card):
+  * **Choose what the status bar shows**: date and time, CPU, RAM, network, volume, battery (on laptops). The other pills slide over to close the gap.
+  * **Dock icon size**: small, medium or large.
+  * **Background**: glass, normal or solid, for the status bar, the dock and the wallpaper picker.
+  * **Picture fit** for the wallpaper picker (fill, fit, stretch, center, span), in the WALLPAPERS card.
+* New automatic tests on real Windows: a speed table that measures how long every page and THEMES control keeps the window from answering, the new THEMES controls, skin files for a three-screen setup, and a theme applied with a screen picked by its number in real Rainmeter.
+
 ## 1.4.1
 
 * **Fixed: CREATE OZZYHN WALLPAPERS reported "Theme failed:" with no reason.** The six wallpapers were drawn, but the app read the finished task the wrong way, took the six results for an error and stopped before adding the folder to the picker. It now reads each result on its own, adds the folder and opens it.
