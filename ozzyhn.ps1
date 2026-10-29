@@ -385,12 +385,12 @@ function Start-OzWorker {
     $ps = [powershell]::Create()
     $ps.RunspacePool = Get-OzPool
     # Background work gives way to the window: on a PC with one or two slow cores the window then
-    # still answers at once while a scan runs (the scan takes a little longer instead)
-    [void]$ps.AddScript('[System.Threading.Thread]::CurrentThread.Priority = [System.Threading.ThreadPriority]::BelowNormal')
-    [void]$ps.AddStatement()
-    # Re-parse the text so the block is not tied to the UI runspace
-    [void]$ps.AddScript($ScriptBlock.ToString())
-    foreach ($a in $ArgumentList) { [void]$ps.AddArgument($a) }
+    # still answers at once while a scan runs (the scan takes a little longer instead). One script
+    # sets that and runs the block: a second statement in the same PowerShell never finishes.
+    # The block is re-created from its text so it is not tied to the UI runspace.
+    [void]$ps.AddScript('param($OzWorkCode, $OzWorkArgs) [System.Threading.Thread]::CurrentThread.Priority = [System.Threading.ThreadPriority]::BelowNormal; $OzWorkBlock = [scriptblock]::Create($OzWorkCode); & $OzWorkBlock @OzWorkArgs')
+    [void]$ps.AddArgument($ScriptBlock.ToString())
+    [void]$ps.AddArgument([object[]]@($ArgumentList))
     $in = New-Object 'System.Management.Automation.PSDataCollection[psobject]'
     $in.Complete()
     $out = New-Object 'System.Management.Automation.PSDataCollection[psobject]'
