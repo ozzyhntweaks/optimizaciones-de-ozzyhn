@@ -4876,7 +4876,7 @@ function Get-OzDockCatalog {
         if (-not $t) { continue }
         $icon = [string]$a.Icon
         if ($icon -and -not [IO.File]::Exists(($icon -replace ',-?\d+$', ''))) { $icon = '' }
-        $found += [pscustomobject]@{ Id = $a.Id; Name = $a.Name; Target = [string]$t; Args = $a.Args; Icon = $icon; Default = $a.Default }
+        $found += [pscustomobject]@{ Id = $a.Id; Name = (T $a.Name); Target = [string]$t; Args = $a.Args; Icon = $icon; Default = $a.Default }
     }
     # Only one browser on by default: the first one found after Edge
     $firstBrowser = $found | Where-Object { $_.Id -in 'chrome', 'firefox', 'brave', 'operagx' } | Select-Object -First 1
@@ -8697,6 +8697,12 @@ Elige una carpeta con fondos de pantalla (JPG, PNG o BMP).
 
 Programs and shortcuts
 Programas y accesos directos
+
+File Explorer
+Explorador de archivos
+
+Settings
+Configuraci&oacute;n
 '@
 #endregion
 
