@@ -144,7 +144,7 @@ function Find-Child($Root, [scriptblock]$Where) {
 foreach ($round in 'first', 'again') {
     foreach ($p in @($pages[1..($pages.Count - 1)]) + 'Dash') {
         # budgets: generous for the test machine (no graphics card, shared CPU), they catch the lag of 1.4 coming back
-        $budget = if ($round -eq 'again') { 200 } elseif ($p -eq 'Themes') { 1500 } elseif ($p -eq 'Games') { 800 } else { 600 }
+        $budget = if ($round -eq 'again') { 500 } elseif ($p -eq 'Themes') { 1500 } elseif ($p -eq 'Games') { 800 } else { 600 }
         Measure-Click "$round open $p" { $Oz.UI["Nav$p"].IsChecked = $true } $budget
     }
     if ($round -eq 'first') {
@@ -155,26 +155,26 @@ foreach ($round in 'first', 'again') {
 $Oz.UI.NavThemes.IsChecked = $true
 Wait-Ui 300
 foreach ($i in 1..2) {
-    Measure-Click 'THEMES tab APPEARANCE' { $Oz.UI.ThemeTabLook.IsChecked = $true } 300
-    Measure-Click 'THEMES tab GENERAL' { $Oz.UI.ThemeTabGeneral.IsChecked = $true } 300
+    Measure-Click 'THEMES tab APPEARANCE' { $Oz.UI.ThemeTabLook.IsChecked = $true } 900
+    Measure-Click 'THEMES tab GENERAL' { $Oz.UI.ThemeTabGeneral.IsChecked = $true } 900
 }
 $lookChips = @(Find-Child $Oz.UI.ThemeLookPanel { param($c) $c -is [System.Windows.Controls.Panel] }).Children
-foreach ($i in 1, 2, 0) { Measure-Click "THEMES look chip $i" { $lookChips[$i].IsChecked = $true } 250 }
+foreach ($i in 1, 2, 0) { Measure-Click "THEMES look chip $i" { $lookChips[$i].IsChecked = $true } 900 }
 $plus = Find-Child $Oz.UI.ThemeClockPanel { param($c) $c -is [System.Windows.Controls.Button] -and [string]$c.Content -eq '+' }
 $clickEvent = [System.Windows.Controls.Primitives.ButtonBase]::ClickEvent
-foreach ($i in 1..3) { Measure-Click "THEMES margin + ($i)" { $plus.RaiseEvent((New-Object System.Windows.RoutedEventArgs($clickEvent))) } 250 }
+foreach ($i in 1..3) { Measure-Click "THEMES margin + ($i)" { $plus.RaiseEvent((New-Object System.Windows.RoutedEventArgs($clickEvent))) } 900 }
 $posChip = Find-Child $Oz.UI.ThemeClockPanel { param($c) $c -is [System.Windows.Controls.RadioButton] -and -not $c.IsChecked }
-Measure-Click 'THEMES clock position' { $posChip.IsChecked = $true } 250
+Measure-Click 'THEMES clock position' { $posChip.IsChecked = $true } 900
 $barSwitch = @(@(Find-Child $Oz.UI.ThemeWidgetPanel { param($c) $c -is [System.Windows.Controls.Grid] }).Children | Where-Object { $_ -is [System.Windows.Controls.CheckBox] }) | Select-Object -First 1
 if (-not $barSwitch) { $barSwitch = Find-Child $Oz.UI.ThemeWidgetPanel { param($c) $c -is [System.Windows.Controls.CheckBox] } }
-Measure-Click 'THEMES widget switch off' { $barSwitch.IsChecked = -not $barSwitch.IsChecked } 250
-Measure-Click 'THEMES widget switch on' { $barSwitch.IsChecked = -not $barSwitch.IsChecked } 250
-Measure-Click 'THEMES style' { Set-OzThemeValue 'Style' 'Blade' } 250
-Measure-Click 'THEMES style back' { Set-OzThemeValue 'Style' 'Horizon' } 250
+Measure-Click 'THEMES widget switch off' { $barSwitch.IsChecked = -not $barSwitch.IsChecked } 900
+Measure-Click 'THEMES widget switch on' { $barSwitch.IsChecked = -not $barSwitch.IsChecked } 900
+Measure-Click 'THEMES style' { Set-OzThemeValue 'Style' 'Blade' } 900
+Measure-Click 'THEMES style back' { Set-OzThemeValue 'Style' 'Horizon' } 900
 $Oz.UI.NavTweaks.IsChecked = $true
 Wait-Ui 300
-foreach ($k in 'ACTIVE', 'RECOMMENDED', 'ALL') { Measure-Click "TWEAKS chip $k" { $Oz.Chips[$k].IsChecked = $true } 250 }
-foreach ($q in 'p', 'po', 'pow', 'powe', 'power', '') { Measure-Click "TWEAKS search '$q'" { $Oz.UI.TweakSearch.Text = $q } 250 }
+foreach ($k in 'ACTIVE', 'RECOMMENDED', 'ALL') { Measure-Click "TWEAKS chip $k" { $Oz.Chips[$k].IsChecked = $true } 900 }
+foreach ($q in 'p', 'po', 'pow', 'powe', 'power', '') { Measure-Click "TWEAKS search '$q'" { $Oz.UI.TweakSearch.Text = $q } 900 }
 Measure-Click 'language ES' { $Oz.UI.LangEs.IsChecked = $true } 2500
 Measure-Click 'language EN' { $Oz.UI.LangEn.IsChecked = $true } 2500
 # Where the time goes: each part on its own (window's thread, no waiting)
@@ -222,6 +222,15 @@ if ($Shots) { [IO.File]::WriteAllLines((Join-Path $Shots 'speed.txt'), [string[]
 Write-Host ('::notice title=UI speed::' + (($speedLines -join "`n") -replace '%', '%25' -replace "`r", '' -replace "`n", '%0A'))
 foreach ($s in $script:Speed) {
     if ($s.Budget -and $s.Freeze -gt $s.Budget) { Fail ('{0}: the window froze for {1} ms (budget {2} ms)' -f $s.Step, $s.Freeze, $s.Budget) }
+}
+# A single slow click can be the test machine; the middle value of each group is what users feel.
+# Version 1.4 took about 100 ms for every THEMES click: these budgets catch that coming back.
+foreach ($g in @(@('THEMES ', 90), @('TWEAKS ', 90))) {
+    $vals = @($script:Speed | Where-Object { $_.Step.StartsWith($g[0]) } | ForEach-Object { $_.Freeze } | Sort-Object)
+    if (-not $vals.Count) { continue }
+    $mid = $vals[[int][math]::Floor(($vals.Count - 1) / 2)]
+    if ($mid -gt $g[1]) { Fail ('{0}clicks: the window froze for {1} ms in the middle of {2} clicks (budget {3} ms)' -f $g[0], $mid, $vals.Count, $g[1]) }
+    else { Pass ('{0}clicks: {1} ms in the middle of {2} clicks (budget {3} ms)' -f $g[0], $mid, $vals.Count, $g[1]) }
 }
 $Oz.UI.NavDash.IsChecked = $true
 Wait-Ui 300
