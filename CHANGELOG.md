@@ -8,7 +8,7 @@ Each release on the [Releases page](https://github.com/ozzyhntweaks/optimizacion
   * **A clock in five styles** (Horizon, Blade, Stack, Pulse, Minimal) with a greeting, date and time in English or Spanish.
   * **Automatic text color.** The clock reads the part of the wallpaper under it (not just the middle of the screen) and picks the most readable of your three colors. BEST CONTRAST measures it; BRIGHTNESS LIMITS uses two limits you set. It follows wallpaper changes, slideshows included.
   * **Settings in two tabs, like the panels it is modeled on:** position (nine spots), margins, size for this screen's scaling, 24-hour time, date format, style, area read, limits and the three colors, all with a **live preview** on your own wallpaper.
-  * **Status bar** with date and time, CPU, RAM, network, volume (scroll to change, click to mute) and battery on laptops.
+  * **Status bar** with date and time, CPU, RAM, network, volume (scroll to change, click to mute) and battery on laptops. On narrow screens the date moves aside so it never covers the other pills.
   * **Dock** with the apps installed on this PC (pick them, or add your own). It lifts the icon under the mouse. Apps open as you, never as administrator.
   * **Wallpaper picker** with slanted cards, color filters (light, dark, warm, cool), scroll to browse and click to set. It reads the folders you choose and makes small previews.
   * **CREATE OZZYHN WALLPAPERS** draws six original wallpapers (dunes light and night, neon horizon, crimson slash, arctic ridges, hex field) into `Pictures\OZZYHN Wallpapers`.
@@ -30,6 +30,7 @@ Each release on the [Releases page](https://github.com/ozzyhntweaks/optimizacion
   * **Start & taskbar:** never combine taskbar buttons, no search history.
   * Profiles pick up the new switches where they fit (Privacy Max, Clean Windows UI, Competitive Gaming, Cool & Quiet, Revive Cheap PC on small drives).
 * The menu buttons get a little shorter on short screens, so all ten pages still fit on a 1366x768 laptop.
+* Theme files and the preview come out the same on Windows set to a comma-decimal region (Spanish, German...).
 * New automatic test on real Windows: it installs Rainmeter from its official release, applies the theme, loads every clock style, lets the picker list the wallpapers, changes the wallpaper to check that the clock switches color, fails on any error or warning in Rainmeter's log, then removes the theme.
 
 ## 1.3.0

@@ -36,9 +36,13 @@ $script:Problems = New-Object System.Collections.Generic.List[string]
 function Fail([string]$Msg) { $script:Problems.Add($Msg); Write-Host "::error::$Msg" }
 function Pass([string]$Msg) { Write-Host "PASS  $Msg" -ForegroundColor Green }
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+if ($Shots) { Add-Type -Namespace OzTest -Name Win -MemberDefinition '[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr h, int c);' }
 function Save-Screen([string]$Name) {
     if (-not $Shots) { return }
-    $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    # The runner's console sits over the desktop: minimize it so the skins are in the picture
+    foreach ($p in @(Get-Process | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and $_.ProcessName -notin 'explorer', 'Rainmeter' })) { [void][OzTest.Win]::ShowWindow($p.MainWindowHandle, 6) }
+    Start-Sleep -Milliseconds 700
+    $b =[System.Windows.Forms.Screen]::PrimaryScreen.Bounds
     $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     try { $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size) } catch { Write-Host "Screenshot failed: $($_.Exception.Message)" }
@@ -75,6 +79,14 @@ foreach ($lang in 'en', 'es') {
 }
 $Oz.Lang = 'en'
 if (-not $script:Problems.Count) { Pass "skin files built for $n combinations of look, style, position, size and language" }
+# Windows set to a comma-decimal region (Spanish, German...) must write the same skin files
+$cfg = Get-OzThemeDefaults
+$cfg.Scale = 125
+$ref = New-OzThemeFiles -Cfg $cfg -InkSlot 1
+$old = [Threading.Thread]::CurrentThread.CurrentCulture
+$comma = & { [Threading.Thread]::CurrentThread.CurrentCulture = [Globalization.CultureInfo]::GetCultureInfo('es-ES'); try { New-OzThemeFiles -Cfg $cfg -InkSlot 1 } finally { [Threading.Thread]::CurrentThread.CurrentCulture = $old } }
+$diff = @($ref.Keys | Where-Object { $ref[$_].Text -ne $comma[$_].Text })
+if ($diff.Count) { Fail "skin files change with the Windows region: $($diff -join ', ')" } else { Pass 'skin files are the same with a comma-decimal Windows region' }
 
 # ---------- 2. wallpapers ----------
 $art = Join-Path $work 'Pictures\OZZYHN Wallpapers'

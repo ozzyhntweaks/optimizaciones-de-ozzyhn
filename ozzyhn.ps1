@@ -3829,12 +3829,12 @@ PH={{28}}
 PR={{14}}
 Gap={{6}}
 WLeft={{96}}
-WMid={{230}}
+WMid={{248}}
 WCpu={{86}}
 WRam={{112}}
 WNet={{128}}
 WVol={{70}}
-WBat={{74}}
+WBat={{80}}
 WSet={{34}}
 XSet=(#BW#-#WSet#)
 XBat=(#XSet#-(#Gap#+#WBat#)*#HasBattery#)
@@ -3842,7 +3842,9 @@ XVol=(#XBat#-#Gap#-#WVol#)
 XNet=(#XVol#-#Gap#-#WNet#)
 XRam=(#XNet#-#Gap#-#WRam#)
 XCpu=(#XRam#-#Gap#-#WCpu#)
-XMid=((#BW#-#WMid#)/2)
+; centered, but slid left when the screen is narrow so it never covers the CPU pill
+XMid=(Max(#WLeft#+#Gap#,Min((#BW#-#WMid#)/2,#XCpu#-#Gap#-#WMid#)))
+MidRoom=(#XCpu#-#Gap#-#WMid#-#WLeft#-#Gap#)
 TY=(#PH#/2)
 ActWalls=[!ToggleConfig "OZZYHN\Walls" "Walls.ini"]
 ActSettings=["ms-settings:"]
@@ -3885,6 +3887,14 @@ Formula=mVol
 IfCondition=mVolNum < 0
 IfTrueAction=[!SetOption tVolIcon Text "[\xE74F]"][!SetOption tVol Text "#S_Mute#"][!UpdateMeter tVolIcon][!UpdateMeter tVol]
 IfFalseAction=[!SetOption tVolIcon Text "[\xE767]"][!SetOption tVol Text "%1%"][!UpdateMeter tVolIcon][!UpdateMeter tVol]
+
+; Hide the date pill when even the slid position has no room (very narrow screens)
+[mMidRoom]
+Measure=Calc
+Formula=#MidRoom#
+UpdateDivider=-1
+IfCondition=mMidRoom < 0
+IfTrueAction=[!HideMeter pMid][!HideMeter tMid]
 
 [mBat]
 Measure=Plugin
@@ -3964,6 +3974,8 @@ Meter=String
 MeterStyle=sPillText
 MeasureName=mClock
 X=(#XMid#+#WMid#/2)
+W=(#WMid#-{{16}})
+ClipString=1
 StringCase=Upper
 InlineSetting=CharacterSpacing | {{1}} | 0
 
@@ -12004,8 +12016,8 @@ function New-OzThemeColor {
     [void]$sp.Children.Add($sw)
     $tb = New-Object System.Windows.Controls.TextBox
     $tb.Style = $Oz.Window.FindResource('Input')
-    $tb.Padding = New-OzThickness '10,5,10,5'
-    $tb.Width = 96
+    $tb.Padding = New-OzThickness '8,5,8,5'
+    $tb.Width = 116
     $tb.MaxLength = 7
     $tb.FontFamily = $Oz.Window.FindResource('Mono')
     $tb.Text = [string]$Oz.ThemeCfg[$Key]
@@ -12253,12 +12265,23 @@ function Update-OzThemePreview {
     if ($cfg.Bar) {
         $bar = New-Object System.Windows.Controls.Grid
         $bar.VerticalAlignment = 'Top'
-        $bar.Margin = New-OzThickness ('{0},{1},{0},0' -f [math]::Max(2, 12 * $s * $f), [math]::Max(2, 8 * $s * $f))
+        $bar.Margin = New-Object System.Windows.Thickness([math]::Max(2, 12 * $s * $f), [math]::Max(2, 8 * $s * $f), [math]::Max(2, 12 * $s * $f), 0)
         $bar.Height = [math]::Max(5, 28 * $s * $f)
-        foreach ($spec in @(@('Left', 96), @('Center', 230), @('Right', 540))) {
+        # same layout as Bar.ini: right cluster, date pill centered or slid left, hidden with no room
+        $hasBat = [bool]($Oz.Sys -and $Oz.Sys.Battery -and $Oz.Sys.Battery.Present)
+        $bw = $sw - 24 * $s
+        $wRight = (454 + $(if ($hasBat) { 86 } else { 0 })) * $s
+        $xCpu = $bw - $wRight
+        $wMid = 248 * $s
+        $xMid = [math]::Max(102 * $s, [math]::Min(($bw - $wMid) / 2, $xCpu - 6 * $s - $wMid))
+        $pills = @(, @(0, (96 * $s)))
+        if ($xCpu - 6 * $s - $wMid - 102 * $s -ge 0) { $pills += , @($xMid, $wMid) }
+        $pills += , @($xCpu, $wRight)
+        foreach ($spec in $pills) {
             $pill = New-Object System.Windows.Controls.Border
-            $pill.HorizontalAlignment = $spec[0]
-            $pill.Width = $spec[1] * $s * $f
+            $pill.HorizontalAlignment = 'Left'
+            $pill.Margin = New-Object System.Windows.Thickness([math]::Max(0, $spec[0] * $f), 0, 0, 0)
+            $pill.Width = $spec[1] * $f
             $pill.CornerRadius = New-Object System.Windows.CornerRadius(14 * $s * $f)
             $pill.Background = Get-OzBrush (& $toHex $look.PillBg)
             $pill.BorderBrush = Get-OzBrush (& $toHex $look.PillLine)
@@ -12273,7 +12296,7 @@ function Update-OzThemePreview {
         $dock.VerticalAlignment = 'Bottom'; $dock.HorizontalAlignment = 'Center'
         $dock.Width = (2 * 12 + $n * 46 + ($n - 1) * 12 + 12 + 1 + 12 + 46) * $s * $f
         $dock.Height = (46 + 24) * $s * $f
-        $dock.Margin = New-OzThickness ('0,0,0,{0}' -f (12 * $s * $f))
+        $dock.Margin = New-Object System.Windows.Thickness(0, 0, 0, (12 * $s * $f))
         $dock.CornerRadius = New-Object System.Windows.CornerRadius(20 * $s * $f)
         $dock.Background = Get-OzBrush (& $toHex $look.PillBg)
         $dock.BorderBrush = Get-OzBrush (& $toHex $look.PillLine)
@@ -12283,7 +12306,7 @@ function Update-OzThemePreview {
         for ($i = 0; $i -lt $n + 1; $i++) {
             $ic = New-Object System.Windows.Controls.Border
             $ic.Width = 46 * $s * $f; $ic.Height = 46 * $s * $f
-            $ic.Margin = New-OzThickness ('{0},0' -f (6 * $s * $f))
+            $ic.Margin = New-Object System.Windows.Thickness((6 * $s * $f), 0, (6 * $s * $f), 0)
             $ic.CornerRadius = New-Object System.Windows.CornerRadius(10 * $s * $f)
             $ic.Background = Get-OzBrush $(if ($i -lt $n) { '#55' + $look.Edge.TrimStart('#') } else { '#22FFFFFF' })
             [void]$icons.Children.Add($ic)
@@ -12299,7 +12322,7 @@ function Update-OzThemePreview {
         $clock.VerticalAlignment = @('Top', 'Center', 'Bottom')[$row]
         $mx = if ($col -eq 1) { 0 } else { $cfg.MarginX * $f }
         $my = if ($row -eq 1) { 0 } else { $cfg.MarginY * $f }
-        $clock.Margin = New-OzThickness ('{0},{1},{0},{1}' -f $mx, $my)
+        $clock.Margin = New-Object System.Windows.Thickness($mx, $my, $mx, $my)
         $align = @('Left', 'Center', 'Right')[$col]
         $culture = if ($Oz.Lang -eq 'es') { [Globalization.CultureInfo]::GetCultureInfo('es-ES') } else { [Globalization.CultureInfo]::GetCultureInfo('en-US') }
         $now = Get-Date
@@ -12317,7 +12340,7 @@ function Update-OzThemePreview {
             $tb.Foreground = $Brush
             $tb.TextAlignment = $align
             $tb.HorizontalAlignment = $align
-            $tb.Margin = New-OzThickness ('0,{0},0,0' -f ($Top * $s * $f))
+            $tb.Margin = New-Object System.Windows.Thickness(0, ($Top * $s * $f), 0, 0)
             [void]$clock.Children.Add($tb)
         }
         $font = 'Bahnschrift, Segoe UI'
