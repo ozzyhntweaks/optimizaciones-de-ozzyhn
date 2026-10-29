@@ -5563,7 +5563,10 @@ function Start-OzWallPrefetch {
             if (-not $f) { return }
             $key = '{0}|{1}' -f $f, [IO.File]::GetLastWriteTimeUtc($f).Ticks
             if ($Oz.WallPrefetch -and $Oz.WallPrefetch.Key -eq $key) { return }
-            $Oz.WallPrefetch = @{ Key = $key; Small = (New-OzWallSmall $f); Image = (New-OzWallPicture $f) }
+            $small = $null; $pic = $null
+            try { $small = New-OzWallSmall $f } catch { }
+            try { $pic = New-OzWallPicture $f } catch { }
+            $Oz.WallPrefetch = @{ Key = $key; Small = $small; Image = $pic }
         } catch { }
     }
 }
@@ -12582,12 +12585,24 @@ function Set-OzThemeValue {
     if ($Key -in 'AutoInk', 'InkMode') { Show-OzThemeClockPanel }
     # chips show the value even when it was set from code (the tests, a language switch...)
     $chipPanel = switch -Wildcard ($Key) {
-        'Look' { 'ThemeLookPanel' } 'WallFit' { 'ThemeWallFitPanel' } 'Screen*' { 'ThemeScreenPanel' }
+        'Look' { 'ThemeLookPanel' } 'WallFit' { 'ThemeWallFitPanel' }
         { $_ -in 'DockSize', 'BgStyle' } { 'ThemeBarDockPanel' }
         { $_ -in 'Style', 'Pos', 'Scale', 'DateFmt', 'InkMode', 'InkFixed' } { 'ThemeClockPanel' }
     }
     if ($chipPanel) { Sync-OzThemeChips $Oz.UI[@($chipPanel)[0]] $Key }
-    if ($Key -in 'ScreenClock', 'ScreenBar', 'ScreenDock', 'Clock', 'Bar', 'Dock') { Show-OzThemeScreenMap }
+    # the screen choices depend on each other (ALL SCREENS, a screen not connected): rebuilt, map included
+    if ($Key -in 'ScreenClock', 'ScreenBar', 'ScreenDock') { Show-OzThemeScreens }
+    elseif ($Key -in 'Clock', 'Bar', 'Dock') { Show-OzThemeScreenMap }
+    if ($Key -eq 'BarItems' -and $Oz.UI.ThemeBarDockPanel) {
+        $stack = New-Object System.Collections.Stack
+        $stack.Push($Oz.UI.ThemeBarDockPanel)
+        while ($stack.Count) {
+            $el = $stack.Pop()
+            if ($el -is [System.Windows.Controls.CheckBox]) { $on = @($Value) -contains [string]$el.Tag; if ([bool]$el.IsChecked -ne $on) { $el.IsChecked = $on }; continue }
+            if ($el -is [System.Windows.Controls.Panel]) { foreach ($c in $el.Children) { $stack.Push($c) } }
+            elseif ($el -is [System.Windows.Controls.Decorator] -and $el.Child) { $stack.Push($el.Child) }
+        }
+    }
     Request-OzThemePreview
     Update-OzThemeButtons
 }
@@ -13292,27 +13307,33 @@ function Update-OzThemePreview {
 
 function Show-OzThemes {
     # Builds the THEMES page from the saved settings
+    # Built top to bottom in a few steps; the window answers (and draws what is done) between them
     if (-not $Oz.ThemeCfg) { $Oz.ThemeCfg = Read-OzThemeSettings }
     $Oz.ThemesShown = $true
+    $pump = [bool]($Oz.Window -and $Oz.Window.IsLoaded)
+    $Oz.ThemeScreens = @(Get-OzScreens)
+    if ($null -eq $Oz.ThemeDockCatalog) { $Oz.ThemeDockCatalog = @(Get-OzDockCatalog) }
     Step-OzProfile 'themes: settings read'
     Update-OzThemeStatus
-    Step-OzProfile 'themes: Rainmeter status'
     Show-OzThemeLooks
     Show-OzThemeWidgets
-    Step-OzProfile 'themes: looks and widgets'
-    Show-OzThemeClockPanel
-    Step-OzProfile 'themes: clock settings'
-    Show-OzThemeWalls
-    Show-OzThemeWallFit
-    Show-OzThemeDock
-    Step-OzProfile 'themes: wallpapers and dock apps'
-    Show-OzThemeBarDock
-    $Oz.ThemeScreens = @(Get-OzScreens)
-    Show-OzThemeScreens
-    Step-OzProfile 'themes: screens, bar and dock'
+    Step-OzProfile 'themes: status, looks and widgets'
     Update-OzThemePreview
     Update-OzThemeButtons
     Step-OzProfile 'themes: preview'
+    if ($pump) { Update-OzUI }
+    Show-OzThemeClockPanel
+    Step-OzProfile 'themes: clock settings'
+    if ($pump) { Update-OzUI }
+    Show-OzThemeScreens
+    Show-OzThemeBarDock
+    Step-OzProfile 'themes: screens, bar and dock'
+    if ($pump) { Update-OzUI }
+    Show-OzThemeWalls
+    Show-OzThemeWallFit
+    Show-OzThemeDock
+    Update-OzThemeButtons
+    Step-OzProfile 'themes: wallpapers and dock apps'
 }
 
 function Get-OzJobResult {

@@ -143,7 +143,9 @@ function Find-Child($Root, [scriptblock]$Where) {
 }
 foreach ($round in 'first', 'again') {
     foreach ($p in @($pages[1..($pages.Count - 1)]) + 'Dash') {
-        Measure-Click "$round open $p" { $Oz.UI["Nav$p"].IsChecked = $true }
+        # budgets: generous for the test machine (no graphics card, shared CPU), they catch the lag of 1.4 coming back
+        $budget = if ($round -eq 'again') { 200 } elseif ($p -eq 'Themes') { 1500 } elseif ($p -eq 'Games') { 800 } else { 600 }
+        Measure-Click "$round open $p" { $Oz.UI["Nav$p"].IsChecked = $true } $budget
     }
     if ($round -eq 'first') {
         foreach ($m in @($Oz.Profile)) { $a = $m -split '\|'; $script:Speed.Add([pscustomobject]@{ Step = "mark: $($a[0])"; Freeze = [int]$a[1]; Done = [int]$a[1]; Budget = 0 }) }
@@ -153,28 +155,28 @@ foreach ($round in 'first', 'again') {
 $Oz.UI.NavThemes.IsChecked = $true
 Wait-Ui 300
 foreach ($i in 1..2) {
-    Measure-Click 'THEMES tab APPEARANCE' { $Oz.UI.ThemeTabLook.IsChecked = $true }
-    Measure-Click 'THEMES tab GENERAL' { $Oz.UI.ThemeTabGeneral.IsChecked = $true }
+    Measure-Click 'THEMES tab APPEARANCE' { $Oz.UI.ThemeTabLook.IsChecked = $true } 300
+    Measure-Click 'THEMES tab GENERAL' { $Oz.UI.ThemeTabGeneral.IsChecked = $true } 300
 }
 $lookChips = @(Find-Child $Oz.UI.ThemeLookPanel { param($c) $c -is [System.Windows.Controls.Panel] }).Children
-foreach ($i in 1, 2, 0) { Measure-Click "THEMES look chip $i" { $lookChips[$i].IsChecked = $true } }
+foreach ($i in 1, 2, 0) { Measure-Click "THEMES look chip $i" { $lookChips[$i].IsChecked = $true } 250 }
 $plus = Find-Child $Oz.UI.ThemeClockPanel { param($c) $c -is [System.Windows.Controls.Button] -and [string]$c.Content -eq '+' }
 $clickEvent = [System.Windows.Controls.Primitives.ButtonBase]::ClickEvent
-foreach ($i in 1..3) { Measure-Click "THEMES margin + ($i)" { $plus.RaiseEvent((New-Object System.Windows.RoutedEventArgs($clickEvent))) } }
+foreach ($i in 1..3) { Measure-Click "THEMES margin + ($i)" { $plus.RaiseEvent((New-Object System.Windows.RoutedEventArgs($clickEvent))) } 250 }
 $posChip = Find-Child $Oz.UI.ThemeClockPanel { param($c) $c -is [System.Windows.Controls.RadioButton] -and -not $c.IsChecked }
-Measure-Click 'THEMES clock position' { $posChip.IsChecked = $true }
+Measure-Click 'THEMES clock position' { $posChip.IsChecked = $true } 250
 $barSwitch = @(@(Find-Child $Oz.UI.ThemeWidgetPanel { param($c) $c -is [System.Windows.Controls.Grid] }).Children | Where-Object { $_ -is [System.Windows.Controls.CheckBox] }) | Select-Object -First 1
 if (-not $barSwitch) { $barSwitch = Find-Child $Oz.UI.ThemeWidgetPanel { param($c) $c -is [System.Windows.Controls.CheckBox] } }
-Measure-Click 'THEMES widget switch off' { $barSwitch.IsChecked = -not $barSwitch.IsChecked }
-Measure-Click 'THEMES widget switch on' { $barSwitch.IsChecked = -not $barSwitch.IsChecked }
-Measure-Click 'THEMES style' { Set-OzThemeValue 'Style' 'Blade' }
-Measure-Click 'THEMES style back' { Set-OzThemeValue 'Style' 'Horizon' }
+Measure-Click 'THEMES widget switch off' { $barSwitch.IsChecked = -not $barSwitch.IsChecked } 250
+Measure-Click 'THEMES widget switch on' { $barSwitch.IsChecked = -not $barSwitch.IsChecked } 250
+Measure-Click 'THEMES style' { Set-OzThemeValue 'Style' 'Blade' } 250
+Measure-Click 'THEMES style back' { Set-OzThemeValue 'Style' 'Horizon' } 250
 $Oz.UI.NavTweaks.IsChecked = $true
 Wait-Ui 300
-foreach ($k in 'ACTIVE', 'RECOMMENDED', 'ALL') { Measure-Click "TWEAKS chip $k" { $Oz.Chips[$k].IsChecked = $true } }
-foreach ($q in 'p', 'po', 'pow', 'powe', 'power', '') { Measure-Click "TWEAKS search '$q'" { $Oz.UI.TweakSearch.Text = $q } }
-Measure-Click 'language ES' { $Oz.UI.LangEs.IsChecked = $true }
-Measure-Click 'language EN' { $Oz.UI.LangEn.IsChecked = $true }
+foreach ($k in 'ACTIVE', 'RECOMMENDED', 'ALL') { Measure-Click "TWEAKS chip $k" { $Oz.Chips[$k].IsChecked = $true } 250 }
+foreach ($q in 'p', 'po', 'pow', 'powe', 'power', '') { Measure-Click "TWEAKS search '$q'" { $Oz.UI.TweakSearch.Text = $q } 250 }
+Measure-Click 'language ES' { $Oz.UI.LangEs.IsChecked = $true } 2500
+Measure-Click 'language EN' { $Oz.UI.LangEn.IsChecked = $true } 2500
 # Where the time goes: each part on its own (window's thread, no waiting)
 function Measure-Part([string]$Name, [scriptblock]$Do) {
     Wait-Ui 50
