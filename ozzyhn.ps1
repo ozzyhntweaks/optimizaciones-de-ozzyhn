@@ -28,7 +28,7 @@
 
 #region ============================ STATE ============================
 $Oz = [hashtable]::Synchronized(@{})
-$Oz.Version   = '1.4.0'
+$Oz.Version   = '1.4.1'
 $Oz.AppName   = 'Optimizaciones de Ozzyhn'
 $Oz.Brand     = 'OZZYHN TWEAKS'
 $Oz.RepoOwner = 'ozzyhntweaks'
@@ -8721,6 +8721,9 @@ Dibujando los fondos OZZYHN...
 Pick a folder with wallpapers (JPG, PNG or BMP).
 Elige una carpeta con fondos de pantalla (JPG, PNG o BMP).
 
+No wallpapers were written.
+No se guard&oacute; ning&uacute;n fondo.
+
 Programs and shortcuts
 Programas y accesos directos
 
@@ -12426,15 +12429,30 @@ function Show-OzThemes {
     Update-OzThemeButtons
 }
 
+function Get-OzJobResult {
+    # The last result object (one with an Ok property) that a background job returned.
+    # Invoke-OzJob hands back one array, so it is read item by item here, never as a whole.
+    param([object[]]$Items)
+    @($Items | Where-Object { $null -ne $_ -and $_.PSObject.Properties['Ok'] }) | Select-Object -Last 1
+}
+
+function Get-OzErrorText {
+    # A readable message for a caught error, never an empty one
+    param($Err)
+    $m = [string]$Err.Exception.Message
+    if (-not $m.Trim()) { $m = $Err.Exception.GetType().Name }
+    $m
+}
+
 function Invoke-OzThemeApply {
     $cfg = $Oz.ThemeCfg
     if (-not $Oz.Rainmeter -or -not $Oz.Rainmeter.Installed) { Update-OzThemeStatus; if (-not $Oz.Rainmeter.Installed) { Write-OzLog (T 'Rainmeter is not installed. Press GET RAINMETER, install it, then try again.') 'WARN'; return } }
-    $r = @(Invoke-OzJob -Activity (T 'Applying the theme...') -ArgumentList @(, $cfg) -ScriptBlock {
+    $r = Get-OzJobResult (Invoke-OzJob -Activity (T 'Applying the theme...') -ArgumentList @(, $cfg) -ScriptBlock {
             param($c)
             try { Install-OzTheme $c; [pscustomobject]@{ Ok = $true; Msg = '' } }
-            catch { [pscustomobject]@{ Ok = $false; Msg = $_.Exception.Message } }
-        }) | Select-Object -Last 1
-    $Oz.ThemeDirty = -not ($r -and $r.Ok)
+            catch { [pscustomobject]@{ Ok = $false; Msg = (Get-OzErrorText $_) } }
+        })
+    $Oz.ThemeDirty = -not ($r -and $r.Ok -eq $true)
     Update-OzThemeStatus
     if ($r -and -not $r.Ok) {
         Write-OzLog ((T 'Theme failed: {0}') -f $r.Msg) 'WARN'
@@ -12445,11 +12463,11 @@ function Invoke-OzThemeApply {
 function Invoke-OzThemeRemove {
     $msg = T "Remove the OZZYHN theme?`n`nIts skins are unloaded and the OZZYHN skins folder is deleted. Your wallpaper, your pictures and your other Rainmeter skins stay as they are."
     if ((Show-OzDialog -Text $msg -Buttons YesNo -Kind Question) -ne 'Yes') { return }
-    $r = @(Invoke-OzJob -Activity (T 'Removing the theme...') -ScriptBlock {
+    $r = Get-OzJobResult (Invoke-OzJob -Activity (T 'Removing the theme...') -ScriptBlock {
             try { Remove-OzTheme; [pscustomobject]@{ Ok = $true; Msg = '' } }
-            catch { [pscustomobject]@{ Ok = $false; Msg = $_.Exception.Message } }
-        }) | Select-Object -Last 1
-    if ($r -and -not $r.Ok) { Write-OzLog ((T 'Theme failed: {0}') -f $r.Msg) 'WARN' }
+            catch { [pscustomobject]@{ Ok = $false; Msg = (Get-OzErrorText $_) } }
+        })
+    if ($r -and $r.Ok -ne $true) { Write-OzLog ((T 'Theme failed: {0}') -f $r.Msg) 'WARN' }
     $Oz.ThemeDirty = $true
     Update-OzThemeStatus
 }
@@ -12457,17 +12475,24 @@ function Invoke-OzThemeRemove {
 function Invoke-OzThemeWallpapers {
     $pics = [Environment]::GetFolderPath('MyPictures')
     $dir = Join-Path $pics 'OZZYHN Wallpapers'
-    $made = @(Invoke-OzJob -Activity (T 'Drawing the OZZYHN wallpapers...') -ArgumentList @($dir) -ScriptBlock {
-            param($d)
-            try { New-OzWallpaperArt -Folder $d | ForEach-Object { [pscustomobject]@{ Path = $_ } } }
-            catch { [pscustomobject]@{ Path = ''; Err = $_.Exception.Message } }
-        })
-    $err = $made | Where-Object { $_.Err } | Select-Object -First 1
-    if ($err) { Write-OzLog ((T 'Theme failed: {0}') -f $err.Err) 'WARN'; return }
+    $res = Invoke-OzJob -Activity (T 'Drawing the OZZYHN wallpapers...') -ArgumentList @($dir) -ScriptBlock {
+        param($d)
+        try { New-OzWallpaperArt -Folder $d | ForEach-Object { [pscustomobject]@{ Path = [string]$_; Err = '' } } }
+        catch { [pscustomobject]@{ Path = ''; Err = (Get-OzErrorText $_) } }
+    }
+    # one item per wallpaper, read one by one
+    $items = @($res | Where-Object { $null -ne $_ -and $_.PSObject.Properties['Err'] })
+    $made = @($items | Where-Object { $_.Path -and [IO.File]::Exists($_.Path) })
+    $err = @($items | Where-Object { $_.Err }) | Select-Object -First 1
+    if ($err -or -not $made.Count) {
+        $why = if ($err) { $err.Err } else { T 'No wallpapers were written.' }
+        Write-OzLog ((T 'Theme failed: {0}') -f $why) 'WARN'
+        return
+    }
     if (@($Oz.ThemeCfg.WallFolders) -notcontains $dir) { $Oz.ThemeCfg.WallFolders = @(@($Oz.ThemeCfg.WallFolders) + $dir) }
     Show-OzThemeWalls
     Set-OzThemeValue 'WallFolders' $Oz.ThemeCfg.WallFolders
-    Write-OzLog ((T '{0} wallpapers saved in {1}') -f @($made).Count, $dir) 'OK'
+    Write-OzLog ((T '{0} wallpapers saved in {1}') -f $made.Count, $dir) 'OK'
     Start-Process -FilePath "$env:SystemRoot\explorer.exe" -ArgumentList ('"{0}"' -f $dir)
 }
 

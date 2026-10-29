@@ -172,6 +172,25 @@ foreach ($pair in @(@('Style', 'Blade'), @('Pos', 'BR'), @('Look', 'neon'), @('A
 if ($Oz.ThemeDirty -and $Oz.UI.ThemeStatus.Text) { Pass "settings changes are marked as not applied: $($Oz.UI.ThemeStatus.Text)" } else { Fail 'THEMES page did not mark changes as not applied' }
 if (@($Oz.UI.ThemePreviewLayer.Children).Count -ge 2) { Pass 'theme preview draws the clock and dock' } else { Fail "theme preview has $(@($Oz.UI.ThemePreviewLayer.Children).Count) parts" }
 Save-Shot 'themes-changed' $Oz.UI.PageThemes.Content
+# A job that returns several objects: the result is read item by item (APPLY / REMOVE THEME)
+$jr = Get-OzJobResult (Invoke-OzJob -ScriptBlock { [pscustomobject]@{ Path = 'a' }; [pscustomobject]@{ Path = 'b' }; [pscustomobject]@{ Ok = $false; Msg = 'boom' } })
+if ($jr -and $jr.Ok -eq $false -and $jr.Msg -eq 'boom') { Pass 'background job results are read one by one' } else { Fail "background job result read wrong: $($jr | ConvertTo-Json -Compress)" }
+$jr = Get-OzJobResult (Invoke-OzJob -ScriptBlock { [pscustomobject]@{ Ok = $true; Msg = '' } })
+if ($jr -and $jr.Ok -eq $true) { Pass 'a single job result is read' } else { Fail 'a single job result was not read' }
+# CREATE OZZYHN WALLPAPERS, the real button handler
+$before = @(Get-Content -LiteralPath $Oz.LogFile -ErrorAction SilentlyContinue).Count
+Invoke-OzSafe 'Wallpapers' { Invoke-OzThemeWallpapers }
+Wait-Idle 120
+$newLines = @(Get-Content -LiteralPath $Oz.LogFile -ErrorAction SilentlyContinue | Select-Object -Skip $before)
+$wallDir = Join-Path ([Environment]::GetFolderPath('MyPictures')) 'OZZYHN Wallpapers'
+$wallFiles = @(Get-ChildItem -LiteralPath $wallDir -Filter 'ozzyhn-*.jpg' -ErrorAction SilentlyContinue)
+$bad = @($newLines | Where-Object { $_ -match '\[(WARN|ERR ?)\]' })
+if ($bad.Count) { Fail "CREATE OZZYHN WALLPAPERS logged: $($bad -join ' | ')" }
+elseif ($wallFiles.Count -eq 6 -and @($Oz.ThemeCfg.WallFolders) -contains $wallDir -and ($newLines -match '6 wallpapers saved')) { Pass 'CREATE OZZYHN WALLPAPERS draws 6 wallpapers and adds the folder' }
+else { Fail "CREATE OZZYHN WALLPAPERS: $($wallFiles.Count) files, folder added: $(@($Oz.ThemeCfg.WallFolders) -contains $wallDir), log: $($newLines -join ' | ')" }
+# close the folder window it opened
+Start-Sleep -Seconds 2
+try { foreach ($w in @((New-Object -ComObject Shell.Application).Windows())) { if ([string]$w.LocationURL -like '*OZZYHN%20Wallpapers*') { $w.Quit() } } } catch { }
 $Oz.UI.ThemeTabGeneral.IsChecked = $true
 Wait-Ui 300
 Set-OzLanguage 'es'
