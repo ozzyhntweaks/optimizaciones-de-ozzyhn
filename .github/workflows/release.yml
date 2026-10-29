@@ -2,6 +2,8 @@
 # v1.1.2 is pushed, which must match $Oz.Version). To release: bump $Oz.Version, push to main.
 # The same checks as CI run first. The release gets the files users download, SHA256SUMS.txt,
 # and a GitHub build attestation for each file.
+# Only the newest release is kept: once it is published, older releases and their version tags
+# are deleted. The full history stays in CHANGELOG.md.
 name: Release
 
 on:
@@ -111,3 +113,21 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "Optimizaciones de Ozzyhn $TAG" \
             --notes-file notes.md
+
+      - name: Remove older releases and their tags (only the newest is kept)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          # Runs only after the new release was published, so there is always one to download
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .tag_name
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name != \"$TAG\") | \"\(.id) \(.tag_name)\"" |
+            while read -r id name; do
+              echo "Deleting release $name"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+            done
+          gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v" --jq ".[] | select(.ref != \"refs/tags/$TAG\") | .ref" |
+            while read -r ref; do
+              echo "Deleting tag ${ref#refs/tags/}"
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/$ref"
+            done
