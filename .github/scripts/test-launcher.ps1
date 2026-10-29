@@ -33,8 +33,18 @@ $local = Join-Path ([IO.Path]::GetTempPath()) 'ozzyhn-local-copy.ps1'
 Set-Content -LiteralPath $local -Value '# local copy'
 $offline = $ps -replace "https://github\.com/[^']+", 'https://127.0.0.1:9/ozzyhn.ps1'
 
-$out = Invoke-Launcher $ps $local
-Check 'online: runs the latest release, not the local copy' ($out -match 'RAN-DOWNLOAD (\d+)' -and [int]$Matches[1] -gt 100000) $out
+# The online check needs a published release. When there is none yet (the first release, or
+# after releases were removed), it cannot be tested, so it is skipped with a notice instead.
+$repo = if ($env:GITHUB_REPOSITORY) { $env:GITHUB_REPOSITORY } else { 'ozzyhntweaks/optimizaciones-de-ozzyhn' }
+$hasRelease = $true
+try { [void](Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/latest" -UseBasicParsing -Headers @{ 'User-Agent' = 'ozzyhn-launcher-test' }) }
+catch { if ($_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 404) { $hasRelease = $false } }
+if ($hasRelease) {
+    $out = Invoke-Launcher $ps $local
+    Check 'online: runs the latest release, not the local copy' ($out -match 'RAN-DOWNLOAD (\d+)' -and [int]$Matches[1] -gt 100000) $out
+} else {
+    Write-Host "::notice::No release of $repo is published yet, so the online download cannot be tested. The release being made now will be the one it downloads."
+}
 $out = Invoke-Launcher $offline $local
 Check 'offline: falls back to the local copy' ($out -match 'RAN-LOCAL') $out
 $out = Invoke-Launcher $offline (Join-Path ([IO.Path]::GetTempPath()) 'missing-ozzyhn.ps1')
