@@ -114,13 +114,23 @@ jobs:
             --title "Optimizaciones de Ozzyhn $TAG" \
             --notes-file notes.md
 
-      - name: Remove older releases and their tags (only the newest is kept)
+  cleanup:
+    # After a new release is published (or when run by hand from the Actions tab), every older
+    # release and version tag is removed, so only the newest version is listed.
+    name: Keep only the newest release
+    needs: [version, release]
+    if: ${{ !cancelled() && needs.version.result == 'success' && (needs.release.result == 'success' || (github.event_name == 'workflow_dispatch' && needs.version.outputs.publish == 'false')) }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Remove older releases and their tags
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.version.outputs.tag }}
         run: |
-          # Runs only after the new release was published, so there is always one to download
-          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq .tag_name
+          # Stops here (deleting nothing) unless the newest release really exists
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" --jq '"Keeping release " + .tag_name'
           gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.tag_name != \"$TAG\") | \"\(.id) \(.tag_name)\"" |
             while read -r id name; do
               echo "Deleting release $name"
