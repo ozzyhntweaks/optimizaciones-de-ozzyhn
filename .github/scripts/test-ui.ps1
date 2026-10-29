@@ -93,6 +93,84 @@ Wait-Idle 180
 if ($Oz.Sys) { Pass "hardware scan finished: $($Oz.Sys.Score.TierName), $($Oz.Rows.Count) tweak rows" } else { Fail 'The hardware scan did not finish' }
 
 $pages = 'Dash', 'Tweaks', 'Profiles', 'Games', 'Themes', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log'
+
+# ---------- speed: how long each click keeps the window from answering ----------
+# A timer beats every few milliseconds on the window's thread. The longest gap between two beats
+# while a click is handled is how long the window was frozen (no hover, no scrolling, no clicks).
+$script:Clock = [Diagnostics.Stopwatch]::StartNew()
+$script:Beat = @{ Last = 0.0; Max = 0.0 }
+$meter = New-Object System.Windows.Threading.DispatcherTimer ([System.Windows.Threading.DispatcherPriority]::Normal)
+$meter.Interval = [TimeSpan]::FromMilliseconds(5)
+$meter.Add_Tick({
+        $now = $script:Clock.Elapsed.TotalMilliseconds
+        $gap = $now - $script:Beat.Last
+        if ($gap -gt $script:Beat.Max) { $script:Beat.Max = $gap }
+        $script:Beat.Last = $now
+    })
+$meter.Start()
+$script:Speed = New-Object System.Collections.Generic.List[object]
+function Measure-Click([string]$Name, [scriptblock]$Do, [int]$Budget = 0) {
+    Wait-Ui 150
+    $script:Beat.Last = $script:Clock.Elapsed.TotalMilliseconds
+    $script:Beat.Max = 0.0
+    $t0 = $script:Clock.Elapsed.TotalMilliseconds
+    & $Do
+    # everything the click queued (layout, drawing, work put off for later) has run when this returns
+    $win.Dispatcher.Invoke([Action] {}, [System.Windows.Threading.DispatcherPriority]::ContextIdle)
+    $t1 = $script:Clock.Elapsed.TotalMilliseconds
+    $freeze = [math]::Max($script:Beat.Max, $t1 - $script:Beat.Last)
+    while ($Oz.Busy) { Wait-Ui 50 }
+    $win.Dispatcher.Invoke([Action] {}, [System.Windows.Threading.DispatcherPriority]::ContextIdle)
+    $t2 = $script:Clock.Elapsed.TotalMilliseconds
+    $script:Speed.Add([pscustomobject]@{ Step = $Name; Freeze = [int]$freeze; Done = [int]($t2 - $t0); Budget = $Budget })
+}
+function Find-Child($Root, [scriptblock]$Where) {
+    foreach ($c in [System.Windows.LogicalTreeHelper]::GetChildren($Root)) {
+        if ($c -isnot [System.Windows.DependencyObject]) { continue }
+        if (& $Where $c) { return $c }
+        $f = Find-Child $c $Where
+        if ($f) { return $f }
+    }
+}
+foreach ($round in 'first', 'again') {
+    foreach ($p in @($pages[1..($pages.Count - 1)]) + 'Dash') {
+        Measure-Click "$round open $p" { $Oz.UI["Nav$p"].IsChecked = $true }
+    }
+}
+$Oz.UI.NavThemes.IsChecked = $true
+Wait-Ui 300
+foreach ($i in 1..2) {
+    Measure-Click 'THEMES tab APPEARANCE' { $Oz.UI.ThemeTabLook.IsChecked = $true }
+    Measure-Click 'THEMES tab GENERAL' { $Oz.UI.ThemeTabGeneral.IsChecked = $true }
+}
+$lookChips = @(Find-Child $Oz.UI.ThemeLookPanel { param($c) $c -is [System.Windows.Controls.Panel] }).Children
+foreach ($i in 1, 2, 0) { Measure-Click "THEMES look chip $i" { $lookChips[$i].IsChecked = $true } }
+$plus = Find-Child $Oz.UI.ThemeClockPanel { param($c) $c -is [System.Windows.Controls.Button] -and [string]$c.Content -eq '+' }
+$clickEvent = [System.Windows.Controls.Primitives.ButtonBase]::ClickEvent
+foreach ($i in 1..3) { Measure-Click "THEMES margin + ($i)" { $plus.RaiseEvent((New-Object System.Windows.RoutedEventArgs($clickEvent))) } }
+$posChip = Find-Child $Oz.UI.ThemeClockPanel { param($c) $c -is [System.Windows.Controls.RadioButton] -and -not $c.IsChecked }
+Measure-Click 'THEMES clock position' { $posChip.IsChecked = $true }
+$barSwitch = @(@(Find-Child $Oz.UI.ThemeWidgetPanel { param($c) $c -is [System.Windows.Controls.Grid] }).Children | Where-Object { $_ -is [System.Windows.Controls.CheckBox] }) | Select-Object -First 1
+if (-not $barSwitch) { $barSwitch = Find-Child $Oz.UI.ThemeWidgetPanel { param($c) $c -is [System.Windows.Controls.CheckBox] } }
+Measure-Click 'THEMES widget switch off' { $barSwitch.IsChecked = -not $barSwitch.IsChecked }
+Measure-Click 'THEMES widget switch on' { $barSwitch.IsChecked = -not $barSwitch.IsChecked }
+Measure-Click 'THEMES style' { Set-OzThemeValue 'Style' 'Blade' }
+Measure-Click 'THEMES style back' { Set-OzThemeValue 'Style' 'Horizon' }
+$Oz.UI.NavTweaks.IsChecked = $true
+Wait-Ui 300
+foreach ($k in 'ACTIVE', 'RECOMMENDED', 'ALL') { Measure-Click "TWEAKS chip $k" { $Oz.Chips[$k].IsChecked = $true } }
+foreach ($q in 'p', 'po', 'pow', 'powe', 'power', '') { Measure-Click "TWEAKS search '$q'" { $Oz.UI.TweakSearch.Text = $q } }
+Measure-Click 'language ES' { $Oz.UI.LangEs.IsChecked = $true }
+Measure-Click 'language EN' { $Oz.UI.LangEn.IsChecked = $true }
+$meter.Stop()
+Write-Host '--- speed (ms): Freeze = longest time the window did not answer, Done = until everything finished ---'
+foreach ($s in $script:Speed) { Write-Host ('SPEED  {0,-34} freeze {1,6}   done {2,6}' -f $s.Step, $s.Freeze, $s.Done) }
+foreach ($s in $script:Speed) {
+    if ($s.Budget -and $s.Freeze -gt $s.Budget) { Fail ('{0}: the window froze for {1} ms (budget {2} ms)' -f $s.Step, $s.Freeze, $s.Budget) }
+}
+$Oz.UI.NavDash.IsChecked = $true
+Wait-Ui 300
+
 foreach ($size in @(@('normal', 1320, 840), @('laptop', 1093, 574))) {
     Set-Size $size[1] $size[2]
     foreach ($p in $pages) {
