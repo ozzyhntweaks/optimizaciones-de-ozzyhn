@@ -103,6 +103,7 @@ $meter.Start()
 $script:Speed = New-Object System.Collections.Generic.List[object]
 function Measure-Click([string]$Name, [scriptblock]$Do, [int]$Budget = 0) {
     Wait-Ui 150
+    if ($null -ne $Oz.Profile) { $Oz.Profile.Add("--- $Name|0"); $Oz.ProfileLast = [Diagnostics.Stopwatch]::GetTimestamp() }
     $script:Beat.Last = $script:Clock.Elapsed.TotalMilliseconds
     $script:Beat.Max = 0.0
     $t0 = $script:Clock.Elapsed.TotalMilliseconds
@@ -121,6 +122,9 @@ function Measure-Click([string]$Name, [scriptblock]$Do, [int]$Budget = 0) {
 $script:Beat.Last = $script:Clock.Elapsed.TotalMilliseconds
 $script:Beat.Max = 0.0
 $t0 = $script:Clock.Elapsed.TotalMilliseconds
+# the app's own timing marks (Step-OzProfile) during startup and the first visit of each page
+$Oz.Profile = New-Object System.Collections.Generic.List[string]
+$Oz.ProfileLast = [Diagnostics.Stopwatch]::GetTimestamp()
 $win.Show()
 Wait-Ui 500
 Wait-Idle 180
@@ -140,6 +144,10 @@ function Find-Child($Root, [scriptblock]$Where) {
 foreach ($round in 'first', 'again') {
     foreach ($p in @($pages[1..($pages.Count - 1)]) + 'Dash') {
         Measure-Click "$round open $p" { $Oz.UI["Nav$p"].IsChecked = $true }
+    }
+    if ($round -eq 'first') {
+        foreach ($m in @($Oz.Profile)) { $a = $m -split '\|'; $script:Speed.Add([pscustomobject]@{ Step = "mark: $($a[0])"; Freeze = [int]$a[1]; Done = [int]$a[1]; Budget = 0 }) }
+        $Oz.Profile = $null
     }
 }
 $Oz.UI.NavThemes.IsChecked = $true

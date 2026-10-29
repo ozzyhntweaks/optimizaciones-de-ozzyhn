@@ -310,10 +310,35 @@ function Open-OzLink {
 #region ============================ BACKGROUND WORK ============================
 # Heavy work runs on background runspaces inside THIS process. The old Start-Job approach
 # launched a whole new powershell.exe every time, which cost seconds before any work began.
+function Step-OzProfile {
+    # Timing marks for the speed test: off (nothing recorded) unless $Oz.Profile is a list
+    param([string]$Name)
+    $p = $Oz.Profile
+    if ($null -eq $p) { return }
+    $now = [Diagnostics.Stopwatch]::GetTimestamp()
+    if ($Oz.ProfileLast) { $p.Add(('{0}|{1}' -f $Name, [int](($now - $Oz.ProfileLast) * 1000 / [Diagnostics.Stopwatch]::Frequency))) }
+    $Oz.ProfileLast = $now
+}
+
+function Wait-OzAsync {
+    # Waits for something running elsewhere (an IAsyncResult) inside the window's message loop,
+    # like Wait-OzWorker, so the window keeps answering meanwhile
+    param($Handle)
+    $disp = if ($Oz.Window) { $Oz.Window.Dispatcher } else { $null }
+    if (-not $Handle -or $Handle.IsCompleted -or -not $disp -or -not $disp.CheckAccess()) { return }
+    $frame = New-Object System.Windows.Threading.DispatcherFrame
+    $timer = New-Object System.Windows.Threading.DispatcherTimer ([System.Windows.Threading.DispatcherPriority]::Background)
+    $timer.Interval = [TimeSpan]::FromMilliseconds(20)
+    $timer.Tag = @{ H = $Handle; Frame = $frame }
+    $timer.Add_Tick({ if ($this.Tag.H.IsCompleted) { $this.Stop(); $this.Tag.Frame.Continue = $false } })
+    $timer.Start()
+    try { [System.Windows.Threading.Dispatcher]::PushFrame($frame) } catch { } finally { $timer.Stop() }
+}
+
 function New-OzPool {
     # Every app function and the shared $Oz state are copied into each background runspace.
     # -NoOpen leaves opening to the caller (Start-OzPool opens it in the background).
-    param([bool]$Bypass, [switch]$NoOpen)
+    param([bool]$Bypass, [switch]$NoOpen, [int]$Min = 1)
     $iss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
     if ($Bypass) { $iss.ExecutionPolicy = [Microsoft.PowerShell.ExecutionPolicy]::Bypass }
     foreach ($f in @(Get-ChildItem -Path function: | Where-Object { $_.Name -like '*-Oz*' -or $_.Name -ceq 'T' })) {
@@ -322,7 +347,7 @@ function New-OzPool {
     $iss.Variables.Add((New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList 'Oz', $Oz, 'Shared app state'))
     $iss.Variables.Add((New-Object System.Management.Automation.Runspaces.SessionStateVariableEntry -ArgumentList 'OzWorker', $true, 'Running on a background runspace'))
     $pool = [runspacefactory]::CreateRunspacePool($iss)
-    [void]$pool.SetMinRunspaces(1)
+    [void]$pool.SetMinRunspaces($Min)
     [void]$pool.SetMaxRunspaces(4)
     if (-not $NoOpen) { $pool.Open() }
     $pool
@@ -333,7 +358,8 @@ function Start-OzPool {
     # and takes a moment, which used to freeze the window just as the startup scan began
     if ($Oz.Pool) { return }
     try {
-        $p = New-OzPool $true -NoOpen
+        # three runspaces: one for each part of the startup scan, all made in the background
+        $p = New-OzPool $true -NoOpen -Min 3
         $Oz.PoolOpening = $p.BeginOpen($null, $null)
         $Oz.Pool = $p
     } catch { $Oz.Pool = $null; $Oz.PoolOpening = $null }
@@ -341,9 +367,12 @@ function Start-OzPool {
 
 function Get-OzPool {
     if ($Oz.Pool -and $Oz.PoolOpening) {
+        Wait-OzAsync $Oz.PoolOpening
         $h = $Oz.PoolOpening
-        $Oz.PoolOpening = $null
-        try { $Oz.Pool.EndOpen($h) } catch { try { $Oz.Pool.Dispose() } catch { }; $Oz.Pool = $null }
+        if ($h) {
+            $Oz.PoolOpening = $null
+            try { $Oz.Pool.EndOpen($h) } catch { try { $Oz.Pool.Dispose() } catch { }; $Oz.Pool = $null }
+        }
     }
     if ($Oz.Pool) { return $Oz.Pool }
     # Bypass lets Windows' own modules load even when scripts are restricted; fall back without it
@@ -2733,12 +2762,18 @@ function Initialize-OzProfiles {
 }
 
 function Resolve-OzProfile {
+    # The tweaks of a profile for this PC. They only depend on the hardware scan, so they are worked
+    # out once per scan (the profile cards, AUTO-TUNE and the stats ask for them often)
     param($P)
+    if (-not $Oz.ProfileIds -or -not [object]::ReferenceEquals($Oz.ProfileIdsFor, $Oz.Sys)) { $Oz.ProfileIds = @{}; $Oz.ProfileIdsFor = $Oz.Sys }
+    if ($P.Key -and $Oz.ProfileIds.ContainsKey($P.Key)) { return $Oz.ProfileIds[$P.Key] }
     $ids = @(& $P.Resolve) | Where-Object { $_ } | Select-Object -Unique
-    @($ids | Where-Object {
+    $r = @($ids | Where-Object {
             $t = if ($Oz.TweakIndex.ContainsKey($_)) { $Oz.TweakIndex[$_] } else { $Oz.Tweaks | Where-Object Id -EQ $_ | Select-Object -First 1 }
             $t -and $t.Risk -ne 'Danger' -and (Test-OzApplicable $t $Oz.Sys)
         })
+    if ($P.Key) { $Oz.ProfileIds[$P.Key] = $r }
+    $r
 }
 #endregion
 
@@ -10626,6 +10661,7 @@ function Invoke-OzPageFill {
     $Name = [string]$Oz.PageWanted
     $page = $Oz.UI["Page$Name"]
     if (-not $page -or $page.Visibility -ne 'Visible') { return }
+    Step-OzProfile "page ${Name}: shown and drawn, filling starts"
     $Oz.PageRetry = $false
     try {
         switch ($Name) {
@@ -13258,18 +13294,25 @@ function Show-OzThemes {
     # Builds the THEMES page from the saved settings
     if (-not $Oz.ThemeCfg) { $Oz.ThemeCfg = Read-OzThemeSettings }
     $Oz.ThemesShown = $true
+    Step-OzProfile 'themes: settings read'
     Update-OzThemeStatus
+    Step-OzProfile 'themes: Rainmeter status'
     Show-OzThemeLooks
     Show-OzThemeWidgets
+    Step-OzProfile 'themes: looks and widgets'
     Show-OzThemeClockPanel
+    Step-OzProfile 'themes: clock settings'
     Show-OzThemeWalls
     Show-OzThemeWallFit
     Show-OzThemeDock
+    Step-OzProfile 'themes: wallpapers and dock apps'
     Show-OzThemeBarDock
     $Oz.ThemeScreens = @(Get-OzScreens)
     Show-OzThemeScreens
+    Step-OzProfile 'themes: screens, bar and dock'
     Update-OzThemePreview
     Update-OzThemeButtons
+    Step-OzProfile 'themes: preview'
 }
 
 function Get-OzJobResult {
@@ -13603,14 +13646,19 @@ function Invoke-OzScan {
     $Oz.EeeCache = $null
     $Oz.NicPropCache = @{}
     [void](Read-OzJournal)
+    Step-OzProfile 'scan: start, journal'
     if (-not $Rescan) {
         Initialize-OzCatalog
         $Oz.TweakIndex = @{}
         foreach ($t in $Oz.Tweaks) { $Oz.TweakIndex[$t.Id] = $t }
         Initialize-OzProfiles
+        Step-OzProfile 'scan: tweak catalog'
+        Update-OzUI
     }
     $slow = @($Oz.Tweaks | Where-Object { $_.Detect })
     $fast = @($Oz.Tweaks | Where-Object { -not $_.Detect })
+    [void](Get-OzPool)
+    Step-OzProfile 'scan: background runspaces ready'
     $wHw = Start-OzWorker -ScriptBlock {
         $s = Get-OzSystemInfo
         try { $s.StartupCount = @(Get-OzStartupApps | Where-Object Enabled).Count } catch { }
@@ -13622,16 +13670,20 @@ function Invoke-OzScan {
     $wSlow = Start-OzWorker -ArgumentList @(, $slow) -ScriptBlock { param($list) [void](Get-OzEthernetPowerProps); Get-OzAllStates $list }
     $wFast = Start-OzWorker -ArgumentList @(, $fast) -ScriptBlock { param($list) Get-OzAllStates $list }
     Start-OzWallPrefetch
+    Step-OzProfile 'scan: workers started'
 
     if (-not $Rescan) { Initialize-OzTweakList }
+    Step-OzProfile 'scan: tweak list built'
 
     $hw = Wait-OzWorker $wHw (T 'Scanning hardware...')
+    Step-OzProfile 'scan: waited for the hardware scan'
     $sys = @($hw | Where-Object { $_.PSObject.Properties['OS'] }) | Select-Object -First 1
     $dnsObj = @($hw | Where-Object { $_.PSObject.Properties['Kind'] -and $_.Kind -eq 'Dns' }) | Select-Object -First 1
     if (-not $sys) { throw (T 'The hardware scan did not return a result.') }
     $Oz.Sys = $sys
     if ($dnsObj) { $Oz.DnsNow = [string]$dnsObj.Value }
     Update-OzDashboard
+    Step-OzProfile 'scan: dashboard'
     $s = $Oz.Sys
     Write-OzLog ((T 'Detected: {0} | {1} {2} | {3} | {4} | {5} GB {6} | {7}') -f (T $s.Form), $s.OS.Family, $s.OS.DisplayVersion, $s.CPU.Name,
         $(if ($s.GPU.Primary) { $s.GPU.Primary.Name } else { T 'no GPU' }), $s.Memory.GB, $s.Memory.Type, $s.Storage.SystemKind) 'OK'
@@ -13643,15 +13695,18 @@ function Invoke-OzScan {
             if ($h -is [hashtable]) { foreach ($k in @($h.Keys)) { $Oz.States[$k] = $h[$k] } }
         }
     }
+    Step-OzProfile 'scan: waited for the tweak states'
     # 169 rows: the window handles clicks and drawing every few rows instead of freezing until all are done
     $n = 0
     foreach ($row in @($Oz.Rows.Values)) { Set-OzRowFromState $row; if (++$n % 24 -eq 0) { Update-OzUI } }
     Update-OzPendingBar
     Update-OzActiveCount
     Update-OzFilter
+    Step-OzProfile 'scan: rows show the states'
     Update-OzUI
     if (-not $Rescan) { Initialize-OzProfileCards } else { Update-OzProfileStats }
     Update-OzJournalView
+    Step-OzProfile 'scan: profiles and journal'
     if ($Oz.ToolsShown) { Update-OzPowerText }
     Start-OzLive
     $Oz.LiveWanted = ($Oz.UI.PageDash.Visibility -eq 'Visible')
