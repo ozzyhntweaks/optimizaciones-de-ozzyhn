@@ -8,7 +8,7 @@ Each release on the [Releases page](https://github.com/ozzyhntweaks/optimizacion
   * **A clock in five styles** (Horizon, Blade, Stack, Pulse, Minimal) with a greeting, date and time in English or Spanish.
   * **Automatic text color.** The clock reads the part of the wallpaper under it (not just the middle of the screen) and picks the most readable of your three colors. BEST CONTRAST measures it; BRIGHTNESS LIMITS uses two limits you set. It follows wallpaper changes, slideshows included.
   * **Settings in two tabs, like the panels it is modeled on:** position (nine spots), margins, size for this screen's scaling, 24-hour time, date format, style, area read, limits and the three colors, all with a **live preview** on your own wallpaper.
-  * **Status bar** with date and time, CPU, RAM, network, volume (scroll to change, click to mute) and battery on laptops. On narrow screens the date moves aside so it never covers the other pills.
+  * **Status bar** with date and time, CPU, RAM, network, volume (scroll to change, click to mute) and battery on laptops. On narrow screens the date moves aside so it never covers the other pills. Short day names always have three letters (JUE, not JU).
   * **Dock** with the apps installed on this PC (pick them, or add your own). It lifts the icon under the mouse. Apps open as you, never as administrator.
   * **Wallpaper picker** with slanted cards, color filters (light, dark, warm, cool), scroll to browse and click to set. It reads the folders you choose and makes small previews.
   * **CREATE OZZYHN WALLPAPERS** draws six original wallpapers (dunes light and night, neon horizon, crimson slash, arctic ridges, hex field) into `Pictures\OZZYHN Wallpapers`.

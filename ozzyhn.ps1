@@ -3319,12 +3319,13 @@ Measure=Time
 Format=%A
 FormatLocale=#Locale#
 
+; The short day comes from the full name, so it is always three letters (Windows gives "ju." in Spanish)
 [mDayShort]
 Measure=Time
-Format=%a
+Format=%A
 FormatLocale=#Locale#
 RegExpSubstitute=1
-Substitute="\.":""
+Substitute="(?i)^(monday|lunes)$":"#S_Mon#","(?i)^(tuesday|martes)$":"#S_Tue#","(?i)^(wednesday|mi\S*rcoles)$":"#S_Wed#","(?i)^(thursday|jueves)$":"#S_Thu#","(?i)^(friday|viernes)$":"#S_Fri#","(?i)^(saturday|s\S*bado)$":"#S_Sat#","(?i)^(sunday|domingo)$":"#S_Sun#"
 
 [mDate]
 Measure=Time
@@ -3829,7 +3830,7 @@ PH={{28}}
 PR={{14}}
 Gap={{6}}
 WLeft={{96}}
-WMid={{248}}
+WMid={{264}}
 WCpu={{86}}
 WRam={{112}}
 WNet={{128}}
@@ -3854,12 +3855,25 @@ ActVolUp=[!CommandMeasure mVol "ChangeVolume 2"]
 ActVolDown=[!CommandMeasure mVol "ChangeVolume -2"]
 
 ; ---------------- measures ----------------
+; date without the dots of short month names ("oct."), time as Windows writes it ("p. m.")
+[mBarDate]
+Measure=Time
+Format=%d %b
+FormatLocale=#Locale#
+RegExpSubstitute=1
+Substitute="\.":""
+
 [mClock]
 Measure=Time
 Format=#BarTimeFmt#
 FormatLocale=#Locale#
+
+[mDayShort]
+Measure=Time
+Format=%A
+FormatLocale=#Locale#
 RegExpSubstitute=1
-Substitute="\.":""
+Substitute="(?i)^(monday|lunes)$":"#S_Mon#","(?i)^(tuesday|martes)$":"#S_Tue#","(?i)^(wednesday|mi\S*rcoles)$":"#S_Wed#","(?i)^(thursday|jueves)$":"#S_Thu#","(?i)^(friday|viernes)$":"#S_Fri#","(?i)^(saturday|s\S*bado)$":"#S_Sat#","(?i)^(sunday|domingo)$":"#S_Sun#"
 
 [mCpu]
 Measure=CPU
@@ -3972,7 +3986,10 @@ Y=0
 [tMid]
 Meter=String
 MeterStyle=sPillText
-MeasureName=mClock
+MeasureName=mDayShort
+MeasureName2=mBarDate
+MeasureName3=mClock
+Text=%1 %2   %3
 X=(#XMid#+#WMid#/2)
 W=(#WMid#-{{16}})
 ClipString=1
@@ -4721,6 +4738,7 @@ $Oz.ThemeWords = @{
         S_IndexFailed = 'The pictures could not be read. Check that PowerShell can run, then press the refresh button.'
         S_G1Morning = 'GOOD'; S_G2Morning = 'MORNING'; S_G1Afternoon = 'GOOD'; S_G2Afternoon = 'AFTERNOON'
         S_G1Evening = 'GOOD'; S_G2Evening = 'EVENING'; S_G1Night = 'GOOD'; S_G2Night = 'NIGHT'
+        S_Mon = 'Mon'; S_Tue = 'Tue'; S_Wed = 'Wed'; S_Thu = 'Thu'; S_Fri = 'Fri'; S_Sat = 'Sat'; S_Sun = 'Sun'
     }
     es = [ordered]@{
         S_RefreshColors = 'Actualizar colores'; S_NextStyle = 'Siguiente estilo de reloj'; S_Wallpapers = 'Fondos de pantalla'; S_Settings = 'Configuraci&oacute;n de Windows'
@@ -4731,6 +4749,7 @@ $Oz.ThemeWords = @{
         S_IndexFailed = 'No se pudieron leer las im&aacute;genes. Comprueba que PowerShell pueda ejecutarse y pulsa el bot&oacute;n de actualizar.'
         S_G1Morning = 'BUENOS'; S_G2Morning = 'D&Iacute;AS'; S_G1Afternoon = 'BUENAS'; S_G2Afternoon = 'TARDES'
         S_G1Evening = 'BUENAS'; S_G2Evening = 'NOCHES'; S_G1Night = 'BUENAS'; S_G2Night = 'NOCHES'
+        S_Mon = 'lun'; S_Tue = 'mar'; S_Wed = 'mi&eacute;'; S_Thu = 'jue'; S_Fri = 'vie'; S_Sat = 's&aacute;b'; S_Sun = 'dom'
     }
 }
 
@@ -5027,7 +5046,7 @@ function New-OzThemeFiles {
     & $line 'TimeShort' $(if ($Cfg.Hour24) { '%H:%M' } else { '%#I:%M' })
     & $line 'PulseInfo' $(if ($Cfg.Hour24) { '%1  [\x00B7]  %2' } else { '%1  [\x00B7]  %2  [\x00B7]  %3' })
     & $line 'DateFmt' $date
-    & $line 'BarTimeFmt' ('%a %d %b   ' + $(if ($Cfg.Hour24) { '%H:%M:%S' } else { '%#I:%M:%S %p' }))
+    & $line 'BarTimeFmt' $(if ($Cfg.Hour24) { '%H:%M:%S' } else { '%#I:%M:%S %p' })
     foreach ($p in 'PosX', 'PosY', 'AnchorX', 'AnchorY', 'Align', 'AlignK') { & $line $p $place.$p }
     & $line 'AutoInk' $(if ($Cfg.AutoInk) { 1 } else { 0 })
     & $line 'NoAutoInk' $(if ($Cfg.AutoInk) { 0 } else { 1 })
@@ -12278,7 +12297,7 @@ function Update-OzThemePreview {
         $bw = $sw - 24 * $s
         $wRight = (454 + $(if ($hasBat) { 86 } else { 0 })) * $s
         $xCpu = $bw - $wRight
-        $wMid = 248 * $s
+        $wMid = 264 * $s
         $xMid = [math]::Max(102 * $s, [math]::Min(($bw - $wMid) / 2, $xCpu - 6 * $s - $wMid))
         $pills = @(, @(0, (96 * $s)))
         if ($xCpu - 6 * $s - $wMid - 102 * $s -ge 0) { $pills += , @($xMid, $wMid) }
