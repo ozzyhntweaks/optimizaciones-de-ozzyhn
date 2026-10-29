@@ -163,8 +163,12 @@ foreach ($q in 'p', 'po', 'pow', 'powe', 'power', '') { Measure-Click "TWEAKS se
 Measure-Click 'language ES' { $Oz.UI.LangEs.IsChecked = $true }
 Measure-Click 'language EN' { $Oz.UI.LangEn.IsChecked = $true }
 $meter.Stop()
-Write-Host '--- speed (ms): Freeze = longest time the window did not answer, Done = until everything finished ---'
-foreach ($s in $script:Speed) { Write-Host ('SPEED  {0,-34} freeze {1,6}   done {2,6}' -f $s.Step, $s.Freeze, $s.Done) }
+$speedLines = @('Speed in ms. Freeze = longest time the window did not answer. Done = until everything finished.') +
+    @($script:Speed | ForEach-Object { '{0,-34} freeze {1,6}   done {2,6}' -f $_.Step, $_.Freeze, $_.Done })
+$speedLines | ForEach-Object { Write-Host "SPEED  $_" }
+# The table is also kept as a file next to the screenshots and shown as a note on the run
+if ($Shots) { [IO.File]::WriteAllLines((Join-Path $Shots 'speed.txt'), [string[]]$speedLines) }
+Write-Host ('::notice title=UI speed::' + (($speedLines -join "`n") -replace '%', '%25' -replace "`r", '' -replace "`n", '%0A'))
 foreach ($s in $script:Speed) {
     if ($s.Budget -and $s.Freeze -gt $s.Budget) { Fail ('{0}: the window froze for {1} ms (budget {2} ms)' -f $s.Step, $s.Freeze, $s.Budget) }
 }
