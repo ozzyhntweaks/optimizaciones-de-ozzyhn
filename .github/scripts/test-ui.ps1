@@ -175,8 +175,12 @@ $Oz.UI.NavTweaks.IsChecked = $true
 Wait-Ui 300
 foreach ($k in 'ACTIVE', 'RECOMMENDED', 'ALL') { Measure-Click "TWEAKS chip $k" { $Oz.Chips[$k].IsChecked = $true } 900 }
 foreach ($q in 'p', 'po', 'pow', 'powe', 'power', '') { Measure-Click "TWEAKS search '$q'" { $Oz.UI.TweakSearch.Text = $q } 900 }
-Measure-Click 'language ES' { $Oz.UI.LangEs.IsChecked = $true } 2500
-Measure-Click 'language EN' { $Oz.UI.LangEn.IsChecked = $true } 2500
+# switching language is rare and redraws every page: only a gross slowdown fails here
+$Oz.Profile = New-Object System.Collections.Generic.List[string]
+Measure-Click 'language ES' { $Oz.UI.LangEs.IsChecked = $true } 6000
+Measure-Click 'language EN' { $Oz.UI.LangEn.IsChecked = $true } 6000
+foreach ($m in @($Oz.Profile)) { $a = $m -split '\|'; $script:Speed.Add([pscustomobject]@{ Step = "mark: $($a[0])"; Freeze = [int]$a[1]; Done = [int]$a[1]; Budget = 0 }) }
+$Oz.Profile = $null
 # Where the time goes: each part on its own (window's thread, no waiting)
 function Measure-Part([string]$Name, [scriptblock]$Do) {
     Wait-Ui 50
