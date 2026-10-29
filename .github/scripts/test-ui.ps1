@@ -8,8 +8,10 @@
       - shows the Games page with a test game whose settings file is known
     Fails on any error the app logs, any unhandled UI exception, or a menu that does not fit.
     With -Shots, saves a PNG of every step to that folder.
+    With -Weak, plays a weak PC: the app gets one CPU core (the test machine has no graphics card
+    either), only the speed part runs, and the speed budgets are for that kind of PC.
 #>
-param([string]$Path = 'ozzyhn.ps1', [string]$Shots = '')
+param([string]$Path = 'ozzyhn.ps1', [string]$Shots = '', [switch]$Weak)
 $ErrorActionPreference = 'Stop'
 trap { Write-Host ('::error::UI test stopped at line {0}: {1}' -f $_.InvocationInfo.ScriptLineNumber, $_.Exception.Message); exit 1 }
 
@@ -33,9 +35,17 @@ $script:Problems = New-Object System.Collections.Generic.List[string]
 function Fail([string]$Msg) { $script:Problems.Add($Msg); Write-Host "::error::$Msg" }
 function Pass([string]$Msg) { Write-Host "PASS  $Msg" -ForegroundColor Green }
 
+# One CPU core for the window, its drawing and every background scan, like a cheap or old laptop
+$script:BudgetScale = 1
+if ($Weak) {
+    [Diagnostics.Process]::GetCurrentProcess().ProcessorAffinity = [IntPtr]1
+    $script:BudgetScale = 2
+    Write-Host "Weak PC: the app runs on one CPU core (of $([Environment]::ProcessorCount))"
+}
 Initialize-OzSpanish $Oz.SpanishPairs
 $Oz.Lang = 'en'
 Initialize-OzWindow
+Write-Host ('Drawing: {0} (WPF render tier {1})' -f $(if (([System.Windows.Media.RenderCapability]::Tier -shr 16) -eq 0) { 'software, no graphics acceleration' } else { 'graphics card' }), ([System.Windows.Media.RenderCapability]::Tier -shr 16))
 $win = $Oz.Window
 $win.Dispatcher.Add_UnhandledException({
         $script:Problems.Add('Unhandled UI exception: ' + $_.Exception.Message)
@@ -223,9 +233,9 @@ $speedLines = @('Speed in ms. Freeze = longest time the window did not answer. D
 $speedLines | ForEach-Object { Write-Host "SPEED  $_" }
 # The table is also kept as a file next to the screenshots and shown as a note on the run
 if ($Shots) { [IO.File]::WriteAllLines((Join-Path $Shots 'speed.txt'), [string[]]$speedLines) }
-Write-Host ('::notice title=UI speed::' + (($speedLines -join "`n") -replace '%', '%25' -replace "`r", '' -replace "`n", '%0A'))
+Write-Host ('::notice title=UI speed' + $(if ($Weak) { ' on one CPU core' }) + '::' + (($speedLines -join "`n") -replace '%', '%25' -replace "`r", '' -replace "`n", '%0A'))
 foreach ($s in $script:Speed) {
-    if ($s.Budget -and $s.Freeze -gt $s.Budget) { Fail ('{0}: the window froze for {1} ms (budget {2} ms)' -f $s.Step, $s.Freeze, $s.Budget) }
+    if ($s.Budget -and $s.Freeze -gt $s.Budget * $script:BudgetScale) { Fail ('{0}: the window froze for {1} ms (budget {2} ms)' -f $s.Step, $s.Freeze, ($s.Budget * $script:BudgetScale)) }
 }
 # A single slow click can be the test machine; the middle value of each group is what users feel.
 # Version 1.4 took about 100 ms for every THEMES click: these budgets catch that coming back.
@@ -233,8 +243,17 @@ foreach ($g in @(@('THEMES ', 90), @('TWEAKS ', 90))) {
     $vals = @($script:Speed | Where-Object { $_.Step.StartsWith($g[0]) } | ForEach-Object { $_.Freeze } | Sort-Object)
     if (-not $vals.Count) { continue }
     $mid = $vals[[int][math]::Floor(($vals.Count - 1) / 2)]
-    if ($mid -gt $g[1]) { Fail ('{0}clicks: the window froze for {1} ms in the middle of {2} clicks (budget {3} ms)' -f $g[0], $mid, $vals.Count, $g[1]) }
-    else { Pass ('{0}clicks: {1} ms in the middle of {2} clicks (budget {3} ms)' -f $g[0], $mid, $vals.Count, $g[1]) }
+    $limit = $g[1] * $script:BudgetScale
+    if ($mid -gt $limit) { Fail ('{0}clicks: the window froze for {1} ms in the middle of {2} clicks (budget {3} ms)' -f $g[0], $mid, $vals.Count, $limit) }
+    else { Pass ('{0}clicks: {1} ms in the middle of {2} clicks (budget {3} ms)' -f $g[0], $mid, $vals.Count, $limit) }
+}
+if ($Weak) {
+    # only the speed part runs for the weak PC
+    $win.Close()
+    Wait-Ui 300
+    if ($script:Problems.Count) { Write-Host "$($script:Problems.Count) problem(s)"; exit 1 }
+    Write-Host 'Weak PC speed test passed' -ForegroundColor Green
+    exit 0
 }
 $Oz.UI.NavDash.IsChecked = $true
 Wait-Ui 300

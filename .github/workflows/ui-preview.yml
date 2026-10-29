@@ -30,6 +30,11 @@ jobs:
         shell: powershell
         run: .\.github\scripts\test-ui.ps1 -Path ozzyhn.ps1 -Shots "$env:RUNNER_TEMP\shots"
 
+      - name: Speed on a weak PC (one CPU core)
+        if: always()
+        shell: powershell
+        run: .\.github\scripts\test-ui.ps1 -Path ozzyhn.ps1 -Weak -Shots "$env:RUNNER_TEMP\shots\weak"
+
       - name: Load the THEMES skins in real Rainmeter and take screenshots
         if: always()
         shell: powershell
