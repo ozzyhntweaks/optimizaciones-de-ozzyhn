@@ -139,6 +139,9 @@ $win.Show()
 Wait-Ui 500
 Wait-Idle 180
 $script:Speed.Add([pscustomobject]@{ Step = 'startup until ready'; Freeze = [int]$script:Beat.Max; Done = [int]($script:Clock.Elapsed.TotalMilliseconds - $t0); Budget = 0 })
+# memory the whole app uses once it is ready (window, background runspaces, all pages built later)
+[GC]::Collect()
+$script:MemReady = [int]([Diagnostics.Process]::GetCurrentProcess().WorkingSet64 / 1MB)
 if ($Oz.Sys) { Pass "hardware scan finished: $($Oz.Sys.Score.TierName), $($Oz.Rows.Count) tweak rows" } else { Fail 'The hardware scan did not finish' }
 
 $pages = 'Dash', 'Tweaks', 'Profiles', 'Games', 'Themes', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log'
@@ -228,7 +231,9 @@ Measure-Part 'startup: filter + counts' { Update-OzPendingBar; Update-OzActiveCo
 $Oz.UI.NavDash.IsChecked = $true
 Wait-Ui 300
 $meter.Stop()
-$speedLines = @('Speed in ms. Freeze = longest time the window did not answer. Done = until everything finished.') +
+$memEnd = [int]([Diagnostics.Process]::GetCurrentProcess().WorkingSet64 / 1MB)
+$speedLines = @('Speed in ms. Freeze = longest time the window did not answer. Done = until everything finished.',
+    ('Memory: {0} MB when ready, {1} MB after every page was opened. CPU cores used: {2}.' -f $script:MemReady, $memEnd, $(if ($Weak) { 1 } else { [Environment]::ProcessorCount }))) +
     @($script:Speed | ForEach-Object { '{0,-34} freeze {1,6}   done {2,6}' -f $_.Step, $_.Freeze, $_.Done })
 $speedLines | ForEach-Object { Write-Host "SPEED  $_" }
 # The table is also kept as a file next to the screenshots and shown as a note on the run
