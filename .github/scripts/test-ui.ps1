@@ -311,3 +311,6 @@ Write-Host '--- app log (warnings) ---'
 Get-Content -LiteralPath $Oz.LogFile -ErrorAction SilentlyContinue | Where-Object { $_ -match '\[WARN\]' } | Select-Object -First 40 | ForEach-Object { Write-Host $_ }
 if ($script:Problems.Count) { Write-Host "$($script:Problems.Count) problem(s)"; exit 1 }
 Write-Host 'UI test passed' -ForegroundColor Green
+# GitHub Actions fails the step on the last native command's exit code (powercfg returns 1 on a PC
+# without a battery), so the result of this test is stated here.
+exit 0
