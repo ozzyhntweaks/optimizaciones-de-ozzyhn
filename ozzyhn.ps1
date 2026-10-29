@@ -385,13 +385,12 @@ function Start-OzWorker {
     param([scriptblock]$ScriptBlock, [object[]]$ArgumentList = @())
     $ps = [powershell]::Create()
     $ps.RunspacePool = Get-OzPool
-    # Background work gives way to the window: on a PC with one or two slow cores the window then
-    # still answers at once while a scan runs (the scan takes a little longer instead). One script
-    # sets that and runs the block: a second statement in the same PowerShell never finishes.
-    # The block is re-created from its text so it is not tied to the UI runspace.
-    [void]$ps.AddScript('param($OzWorkCode, $OzWorkArgs) [System.Threading.Thread]::CurrentThread.Priority = [System.Threading.ThreadPriority]::BelowNormal; $OzWorkBlock = [scriptblock]::Create($OzWorkCode); & $OzWorkBlock @OzWorkArgs')
-    [void]$ps.AddArgument($ScriptBlock.ToString())
-    [void]$ps.AddArgument([object[]]@($ArgumentList))
+    # Background work keeps normal priority: the window's thread is the one raised (above normal),
+    # so it goes first. Lowering these instead let the window wait on a lock (logging, pictures)
+    # held by a background thread that other programs kept off the CPU.
+    # Re-parse the text so the block is not tied to the UI runspace
+    [void]$ps.AddScript($ScriptBlock.ToString())
+    foreach ($a in $ArgumentList) { [void]$ps.AddArgument($a) }
     $in = New-Object 'System.Management.Automation.PSDataCollection[psobject]'
     $in.Complete()
     $out = New-Object 'System.Management.Automation.PSDataCollection[psobject]'
@@ -13821,8 +13820,8 @@ function Initialize-OzWindow {
     # Builds the main window and wires every control. Used by Start-Ozzyhn and by the CI UI test,
     # so the test opens exactly the window users get.
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
-    # The window's thread goes first when the CPU is busy (background work runs below normal), so on
-    # a PC with one or two slow cores clicks and drawing are not held up by the scans
+    # The window's thread goes first when the CPU is busy, so on a PC with one or two slow cores
+    # clicks and drawing are not held up by the scans running in the background
     try { [System.Threading.Thread]::CurrentThread.Priority = [System.Threading.ThreadPriority]::AboveNormal } catch { }
     $Oz.ResCache = @{}
     $Oz.Window = [Windows.Markup.XamlReader]::Parse($Oz.Xaml)
