@@ -1,0 +1,120 @@
+Speed in ms. Freeze = longest time the window did not answer. Done = until everything finished.
+Memory: 302 MB when ready, 350 MB after every page was opened. CPU cores used: 1.
+startup until ready                freeze    583   done   9660
+first open Tweaks                  freeze     23   done     50
+first open Profiles                freeze     25   done     29
+first open Games                   freeze    188   done    337
+first open Themes                  freeze    483   done    778
+first open Debloat                 freeze     47   done    910
+first open Drivers                 freeze    150   done    737
+first open Tools                   freeze    140   done    159
+first open Backup                  freeze      9   done     12
+first open Log                     freeze      8   done     13
+first open Dash                    freeze      2   done      5
+mark: scan: start, journal         freeze    679   done    679
+mark: scan: tweak list built       freeze   1949   done   1949
+mark: scan: waited for the hardware scan freeze   3662   done   3662
+mark: scan: dashboard              freeze    314   done    314
+mark: scan: waited for the tweak states freeze   1248   done   1248
+mark: scan: rows show the states   freeze   1076   done   1076
+mark: scan: profiles and journal   freeze    456   done    456
+mark: --- first open Tweaks        freeze      0   done      0
+mark: page Tweaks: shown and drawn, filling starts freeze     39   done     39
+mark: --- first open Profiles      freeze      0   done      0
+mark: page Profiles: shown and drawn, filling starts freeze     28   done     28
+mark: --- first open Games         freeze      0   done      0
+mark: page Games: shown and drawn, filling starts freeze      6   done      6
+mark: --- first open Themes        freeze      0   done      0
+mark: page Themes: shown and drawn, filling starts freeze     17   done     17
+mark: themes: settings read        freeze    117   done    117
+mark: themes: status, looks and widgets freeze     95   done     95
+mark: themes: preview              freeze    242   done    242
+mark: themes: clock settings       freeze    132   done    132
+mark: themes: screens, bar and dock freeze     95   done     95
+mark: themes: wallpapers and dock apps freeze     72   done     72
+mark: --- first open Debloat       freeze      0   done      0
+mark: page Debloat: shown and drawn, filling starts freeze      9   done      9
+mark: --- first open Drivers       freeze      0   done      0
+mark: page Drivers: shown and drawn, filling starts freeze      7   done      7
+mark: --- first open Tools         freeze      0   done      0
+mark: page Tools: shown and drawn, filling starts freeze     19   done     19
+mark: --- first open Backup        freeze      0   done      0
+mark: page Backup: shown and drawn, filling starts freeze      9   done      9
+mark: --- first open Log           freeze      0   done      0
+mark: page Log: shown and drawn, filling starts freeze     12   done     12
+mark: --- first open Dash          freeze      0   done      0
+mark: page Dash: shown and drawn, filling starts freeze      4   done      4
+again open Tweaks                  freeze      2   done      6
+again open Profiles                freeze      2   done      4
+again open Games                   freeze      2   done      4
+again open Themes                  freeze     39   done     59
+again open Debloat                 freeze      2   done      4
+again open Drivers                 freeze      2   done      4
+again open Tools                   freeze      2   done      4
+again open Backup                  freeze      2   done      4
+again open Log                     freeze      2   done      5
+again open Dash                    freeze      2   done      5
+THEMES tab APPEARANCE              freeze     77   done     96
+THEMES tab GENERAL                 freeze     65   done     87
+THEMES tab APPEARANCE              freeze     62   done     93
+THEMES tab GENERAL                 freeze     38   done     67
+THEMES look chip 1                 freeze     39   done     61
+THEMES look chip 2                 freeze     27   done     30
+THEMES look chip 0                 freeze     31   done     34
+THEMES margin + (1)                freeze     23   done     38
+THEMES margin + (2)                freeze     23   done     25
+THEMES margin + (3)                freeze     26   done     32
+THEMES clock position              freeze     57   done     71
+THEMES widget switch off           freeze     33   done     47
+THEMES widget switch on            freeze     22   done     31
+THEMES style                       freeze     30   done     33
+THEMES style back                  freeze     22   done     25
+TWEAKS chip ACTIVE                 freeze      8   done     17
+TWEAKS chip RECOMMENDED            freeze     40   done     44
+TWEAKS chip ALL                    freeze     11   done     15
+TWEAKS search 'p'                  freeze      7   done      9
+TWEAKS search 'po'                 freeze      5   done      9
+TWEAKS search 'pow'                freeze     14   done     18
+TWEAKS search 'powe'               freeze      2   done      4
+TWEAKS search 'power'              freeze      2   done      4
+TWEAKS search ''                   freeze     28   done     34
+language ES                        freeze    108   done   1290
+language EN                        freeze    110   done   1283
+mark: --- language ES              freeze      0   done      0
+mark: themes: settings read        freeze   1057   done   1057
+mark: themes: status, looks and widgets freeze     37   done     37
+mark: themes: preview              freeze     20   done     20
+mark: themes: clock settings       freeze     48   done     48
+mark: themes: screens, bar and dock freeze     52   done     52
+mark: themes: wallpapers and dock apps freeze     38   done     38
+mark: --- language EN              freeze      0   done      0
+mark: themes: settings read        freeze   1065   done   1065
+mark: themes: status, looks and widgets freeze     38   done     38
+mark: themes: preview              freeze     45   done     45
+mark: themes: clock settings       freeze     43   done     43
+mark: themes: screens, bar and dock freeze     43   done     43
+mark: themes: wallpapers and dock apps freeze     37   done     37
+part: THEMES status                freeze     10   done     10
+part: THEMES looks                 freeze      9   done      9
+part: THEMES widgets               freeze     17   done     17
+part: THEMES clock panel           freeze     40   done     40
+part: THEMES walls                 freeze      9   done      9
+part: THEMES dock apps             freeze     17   done     17
+part: THEMES bar and dock          freeze     17   done     17
+part: THEMES screen list           freeze      2   done      2
+part: THEMES screens card          freeze     17   done     17
+part: THEMES preview               freeze     20   done     20
+part: THEMES preview, new wallpaper freeze     59   done     59
+part: THEMES whole page            freeze    208   done    208
+part: THEMES whole page + layout   freeze    216   done    216
+part: lang: window texts           freeze     30   done     30
+part: lang: dashboard              freeze     31   done     31
+part: lang: tweak rows             freeze    393   done    393
+part: lang: profiles               freeze     61   done     61
+part: lang: tools                  freeze     56   done     56
+part: lang: games                  freeze     37   done     37
+part: lang: drivers                freeze     51   done     51
+part: lang: debloat                freeze      4   done      4
+part: lang: journal                freeze      3   done      3
+part: startup: rows from state     freeze    295   done    295
+part: startup: filter + counts     freeze     25   done     25
