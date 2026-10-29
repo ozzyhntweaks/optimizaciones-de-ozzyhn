@@ -203,6 +203,16 @@ Set-Size 1093 574
 Save-Shot 'laptop-themes'
 Set-Size 1320 840
 
+# ---------- battery wear from powercfg's report (laptops whose WMI battery data is empty) ----------
+$sample = '<?xml version="1.0" encoding="utf-8"?><BatteryReport xmlns="http://schemas.microsoft.com/battery/2012"><Batteries><Battery><Id>Primary</Id><DesignCapacity>83000</DesignCapacity><FullChargeCapacity>74700</FullChargeCapacity><CycleCount>12</CycleCount></Battery></Batteries></BatteryReport>'
+$cap = Read-OzBatteryReport $sample
+if ($cap -and $cap.Design -eq 83000 -and $cap.Full -eq 74700) { Pass 'battery report: design and full-charge capacity read' } else { Fail "battery report read wrong: $($cap | ConvertTo-Json -Compress)" }
+if ($null -eq (Read-OzBatteryReport '<BatteryReport xmlns="http://schemas.microsoft.com/battery/2012"><Batteries /></BatteryReport>')) { Pass 'battery report without a battery gives nothing' } else { Fail 'battery report without a battery gave a value' }
+$capNow = Get-OzBatteryCapacity
+if (-not (Test-Path -LiteralPath (Join-Path $Oz.DataDir 'battery-report.xml'))) { Pass "powercfg battery report ran and was cleaned up (this PC: $(if ($capNow) { 'battery found' } else { 'no battery' }))" } else { Fail 'the battery report file was left behind' }
+$sheet = Get-OzSpecSheet $Oz.Sys
+if ($sheet -notmatch 'wear %') { Pass 'spec sheet never prints an empty wear value' } else { Fail 'spec sheet printed "wear %" with no number' }
+
 # ---------- Ctrl+F ----------
 $Oz.UI.NavDash.IsChecked = $true
 Wait-Ui 200

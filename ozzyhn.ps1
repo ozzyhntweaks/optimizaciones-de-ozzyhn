@@ -942,6 +942,37 @@ function Get-OzCim {
     } catch { $null }
 }
 
+function Read-OzBatteryReport {
+    # Design and full-charge capacity (mWh) of the first battery in powercfg's XML battery report
+    param([string]$Xml)
+    try {
+        $x = [xml]$Xml
+        foreach ($b in @($x.BatteryReport.Batteries.Battery)) {
+            $design = 0.0; $full = 0.0
+            if ([double]::TryParse([string]$b.DesignCapacity, [Globalization.NumberStyles]::Float, $Oz.Inv, [ref]$design) -and $design -gt 0 -and
+                [double]::TryParse([string]$b.FullChargeCapacity, [Globalization.NumberStyles]::Float, $Oz.Inv, [ref]$full) -and $full -gt 0) {
+                return [pscustomobject]@{ Design = $design; Full = $full }
+            }
+        }
+    } catch { }
+    $null
+}
+
+function Get-OzBatteryCapacity {
+    # Many laptops (HP, Lenovo...) leave Windows' WMI battery classes empty. powercfg asks the battery
+    # driver directly; its report goes to the app's own data folder (administrators only), then is deleted.
+    if (-not $Oz.DataDir -or -not [IO.Directory]::Exists($Oz.DataDir)) { return $null }
+    $file = Join-Path $Oz.DataDir 'battery-report.xml'
+    try {
+        if ([IO.File]::Exists($file)) { [IO.File]::Delete($file) }
+        & "$env:SystemRoot\System32\powercfg.exe" /batteryreport /xml /output $file 2>&1 | Out-Null
+        if (-not [IO.File]::Exists($file)) { return $null }
+        $r = Read-OzBatteryReport ([IO.File]::ReadAllText($file))
+        [IO.File]::Delete($file)
+        return $r
+    } catch { return $null }
+}
+
 function Get-OzMemoryTypeName {
     param([int]$Code)
     switch ($Code) {
@@ -1148,6 +1179,9 @@ function Get-OzSystemInfo {
         $stat = Get-OzCim -Namespace 'root/wmi' -Class 'BatteryStaticData' | Select-Object -First 1
         if ($full.FullChargedCapacity -and $stat.DesignedCapacity) {
             $batInfo.WearPct = [math]::Max(0, [math]::Round((1 - ($full.FullChargedCapacity / $stat.DesignedCapacity)) * 100))
+        } else {
+            $cap = Get-OzBatteryCapacity
+            if ($cap) { $batInfo.WearPct = [math]::Max(0, [math]::Round((1 - ($cap.Full / $cap.Design)) * 100)) }
         }
     }
 
@@ -1423,7 +1457,10 @@ function Get-OzSpecSheet {
     $lines += ('Board    : {0} {1} | BIOS {2}' -f $Sys.Board.Manufacturer, $Sys.Board.Product, $Sys.Board.BiosVersion)
     $lines += ('System   : {0} {1}' -f $Sys.Board.SystemManufacturer, $Sys.Board.SystemModel)
     $lines += ('Security : VBS {0} | HVCI {1} | Secure Boot {2} | TPM {3}' -f $Sys.Security.VBS, $Sys.Security.HVCI, $Sys.Security.SecureBoot, $Sys.Security.TPM)
-    if ($Sys.Battery.Present) { $lines += ('Battery  : {0}% charge | wear {1}%' -f $Sys.Battery.Charge, $Sys.Battery.WearPct) }
+    if ($Sys.Battery.Present) {
+        $wear = if ($null -ne $Sys.Battery.WearPct) { 'wear {0}%' -f $Sys.Battery.WearPct } else { 'wear not reported by this laptop' }
+        $lines += ('Battery  : {0}% charge | {1}' -f $Sys.Battery.Charge, $wear)
+    }
     $lines += ('Power    : {0}' -f $Sys.Power.Name)
     $lines += ''
     $lines += ('--- {0} {1} by {2} - {3} ---' -f $Oz.AppName, $Oz.Version, $Oz.Brand, $Oz.ProfileUrl)

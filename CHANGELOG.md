@@ -7,6 +7,7 @@ Each release on the [Releases page](https://github.com/ozzyhntweaks/optimizacion
 * **Fixed: CREATE OZZYHN WALLPAPERS reported "Theme failed:" with no reason.** The six wallpapers were drawn, but the app read the finished task the wrong way, took the six results for an error and stopped before adding the folder to the picker. It now reads each result on its own, adds the folder and opens it.
 * APPLY THEME and REMOVE THEME read their result the same safer way, so a failure is never shown as success or the other way round.
 * An error is never logged without a reason any more: when Windows gives no message, its type is shown.
+* **Battery wear on laptops that hide it** (HP OMEN and others): when Windows' battery data is empty, the app reads the design and full-charge capacity from Windows' own battery report (`powercfg /batteryreport`, made in the app's data folder and deleted right after). The spec sheet no longer prints "wear %" with no number.
 * New automatic test on real Windows: it presses CREATE OZZYHN WALLPAPERS in the app and fails on any warning, a missing file or a folder that was not added.
 
 ## 1.4.0
