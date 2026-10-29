@@ -311,8 +311,9 @@ function Open-OzLink {
 # Heavy work runs on background runspaces inside THIS process. The old Start-Job approach
 # launched a whole new powershell.exe every time, which cost seconds before any work began.
 function New-OzPool {
-    # Every app function and the shared $Oz state are copied into each background runspace
-    param([bool]$Bypass)
+    # Every app function and the shared $Oz state are copied into each background runspace.
+    # -NoOpen leaves opening to the caller (Start-OzPool opens it in the background).
+    param([bool]$Bypass, [switch]$NoOpen)
     $iss = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
     if ($Bypass) { $iss.ExecutionPolicy = [Microsoft.PowerShell.ExecutionPolicy]::Bypass }
     foreach ($f in @(Get-ChildItem -Path function: | Where-Object { $_.Name -like '*-Oz*' -or $_.Name -ceq 'T' })) {
@@ -323,11 +324,27 @@ function New-OzPool {
     $pool = [runspacefactory]::CreateRunspacePool($iss)
     [void]$pool.SetMinRunspaces(1)
     [void]$pool.SetMaxRunspaces(4)
-    $pool.Open()
+    if (-not $NoOpen) { $pool.Open() }
     $pool
 }
 
+function Start-OzPool {
+    # Opens the pool while the window appears: making the first runspace loads every app function
+    # and takes a moment, which used to freeze the window just as the startup scan began
+    if ($Oz.Pool) { return }
+    try {
+        $p = New-OzPool $true -NoOpen
+        $Oz.PoolOpening = $p.BeginOpen($null, $null)
+        $Oz.Pool = $p
+    } catch { $Oz.Pool = $null; $Oz.PoolOpening = $null }
+}
+
 function Get-OzPool {
+    if ($Oz.Pool -and $Oz.PoolOpening) {
+        $h = $Oz.PoolOpening
+        $Oz.PoolOpening = $null
+        try { $Oz.Pool.EndOpen($h) } catch { try { $Oz.Pool.Dispose() } catch { }; $Oz.Pool = $null }
+    }
     if ($Oz.Pool) { return $Oz.Pool }
     # Bypass lets Windows' own modules load even when scripts are restricted; fall back without it
     try { $Oz.Pool = New-OzPool $true } catch { $Oz.Pool = New-OzPool $false }
@@ -5504,6 +5521,8 @@ function Start-OzWallPrefetch {
     # THEMES does not wait for a large picture to be decoded (twice) on the window's thread
     if ($Oz.WallPrefetchWorker -and -not $Oz.WallPrefetchWorker.Handle.IsCompleted) { return }
     $Oz.WallPrefetchWorker = Start-OzWorker -ScriptBlock {
+        # loading these libraries the first time takes a moment: done here, not on the first visit to THEMES
+        try { Add-Type -AssemblyName System.Windows.Forms, System.Drawing; [void][System.Windows.Forms.Screen]::AllScreens } catch { }
         try {
             $f = Get-OzWallFile
             if (-not $f) { return }
@@ -10835,16 +10854,25 @@ function Set-OzLanguage {
     if ($ui.LangEn.IsChecked -ne ($Lang -eq 'en')) { $ui.LangEn.IsChecked = ($Lang -eq 'en') }
     if ($ui.LangEs.IsChecked -ne ($Lang -eq 'es')) { $ui.LangEs.IsChecked = ($Lang -eq 'es') }
 
+    # Every page is redrawn in the new language in turn, and the window answers between the parts
+    # (with the window open), so the switch never freezes it for long
+    $pump = [bool]($Oz.Window -and $Oz.Window.IsLoaded)
     if ($Oz.Sys) { Update-OzDashboard; if ($Oz.LiveShown) { Update-OzLive $Oz.LiveShown } }
-    foreach ($row in @($Oz.Rows.Values)) { Set-OzRowText $row; Set-OzRowBadges $row; Set-OzRowVisual $row }
+    if ($pump) { Update-OzUI }
+    $n = 0
+    foreach ($row in @($Oz.Rows.Values)) {
+        Set-OzRowText $row; Set-OzRowBadges $row; Set-OzRowVisual $row
+        if ($pump -and ++$n % 24 -eq 0) { Update-OzUI }
+    }
     foreach ($k in @($Oz.CatHeaders.Keys)) { Set-OzCatHeaderText $k }
     if ($Oz.Rows.Count) { Update-OzChipLabels; Update-OzPendingBar; Update-OzActiveCount }
-    if ($Oz.ProfileStats) { Initialize-OzProfileCards }
-    if ($Oz.BloatShown -and $null -ne $Oz.LastBloat) { Show-OzBloat $Oz.LastBloat }
-    if ($Oz.DriversShown) { Show-OzDriverRecs; if ($Oz.LastDriverScan) { Show-OzDriverScan $Oz.LastDriverScan -Quiet } }
-    if ($Oz.ToolsShown) { Initialize-OzTools }
+    if ($pump) { Update-OzUI }
+    if ($Oz.ProfileStats) { Initialize-OzProfileCards; if ($pump) { Update-OzUI } }
+    if ($Oz.BloatShown -and $null -ne $Oz.LastBloat) { Show-OzBloat $Oz.LastBloat; if ($pump) { Update-OzUI } }
+    if ($Oz.DriversShown) { Show-OzDriverRecs; if ($Oz.LastDriverScan) { Show-OzDriverScan $Oz.LastDriverScan -Quiet }; if ($pump) { Update-OzUI } }
+    if ($Oz.ToolsShown) { Initialize-OzTools; if ($pump) { Update-OzUI } }
     # the games found last time are shown again in the new language, without scanning again
-    if ($Oz.GamesShown -and $null -ne $Oz.LastGames) { Show-OzGames $Oz.LastGames -Quiet } elseif (-not $Oz.GamesShown) { $ui.GamesHint.Text = T 'The game check starts after the hardware scan.' }
+    if ($Oz.GamesShown -and $null -ne $Oz.LastGames) { Show-OzGames $Oz.LastGames -Quiet; if ($pump) { Update-OzUI } } elseif (-not $Oz.GamesShown) { $ui.GamesHint.Text = T 'The game check starts after the hardware scan.' }
     if ($Oz.ThemesShown) { try { Show-OzThemes } catch { Write-OzLog ((T '{0} failed: {1}') -f (T 'Themes'), $_.Exception.Message) 'ERR' } }
     Update-OzCleanText
     Update-OzJournalView
@@ -11341,7 +11369,8 @@ function Update-OzAllRowStates {
     foreach ($h in (Wait-OzWorker $w (T 'Reading the real state of every tweak...'))) {
         if ($h -is [hashtable]) { foreach ($k in @($h.Keys)) { $Oz.States[$k] = $h[$k] } }
     }
-    foreach ($row in @($Oz.Rows.Values)) { Set-OzRowFromState $row }
+    $n = 0
+    foreach ($row in @($Oz.Rows.Values)) { Set-OzRowFromState $row; if (++$n % 24 -eq 0) { Update-OzUI } }
     Update-OzPendingBar
     Update-OzActiveCount
     Update-OzFilter
@@ -12066,6 +12095,10 @@ function New-OzGameCard {
     $details = [System.Windows.Controls.StackPanel]::new()
     $details.Margin = New-OzThickness '0,14,0,0'
     $details.Visibility = if ($R.Installed) { 'Visible' } else { 'Collapsed' }
+    # the details (settings file, menu, launch options) are built the first time they are shown:
+    # most games are not installed and stay folded, so the page opens much faster
+    $details.Tag = @{ R = $R; Built = $false }
+    $details.Add_IsVisibleChanged({ if ($this.IsVisible -and -not $this.Tag.Built) { Add-OzGameDetails $this } })
     $toggle = New-OzButton -Text $(if ($R.Installed) { T 'HIDE' } else { T 'DETAILS' }) -Style 'Neon' -Margin '0'
     $toggle.Tag = @{ Panel = $details; Show = (T 'DETAILS'); Hide = (T 'HIDE') }
     $toggle.Add_Click({
@@ -12077,6 +12110,19 @@ function New-OzGameCard {
     [void]$right.Children.Add($toggle)
     Add-OzGridChild $head $right 2
     [void]$sp.Children.Add($head)
+    [void]$sp.Children.Add($details)
+    $card.Child = $sp
+    $card
+}
+
+function Add-OzGameDetails {
+    # Fills a game card's details panel once (see New-OzGameCard)
+    param($Details)
+    if ($Details.Tag.Built) { return }
+    $Details.Tag.Built = $true
+    $details = $Details
+    $R = $Details.Tag.R
+    $g = $R.Game
 
     # ---- the game's own settings file ----
     if ($g.Checks.Count -and ($R.Installed -or $R.ConfigFound)) {
@@ -12158,10 +12204,6 @@ function New-OzGameCard {
         }
     }
     [void]$details.Children.Add((New-OzText -Text $g.LaunchNote -Size 12.5 -Wrap -Margin '0,6,0,0'))
-
-    [void]$sp.Children.Add($details)
-    $card.Child = $sp
-    $card
 }
 #endregion
 
@@ -13579,6 +13621,7 @@ function Invoke-OzScan {
     }
     $wSlow = Start-OzWorker -ArgumentList @(, $slow) -ScriptBlock { param($list) [void](Get-OzEthernetPowerProps); Get-OzAllStates $list }
     $wFast = Start-OzWorker -ArgumentList @(, $fast) -ScriptBlock { param($list) Get-OzAllStates $list }
+    Start-OzWallPrefetch
 
     if (-not $Rescan) { Initialize-OzTweakList }
 
@@ -13600,17 +13643,19 @@ function Invoke-OzScan {
             if ($h -is [hashtable]) { foreach ($k in @($h.Keys)) { $Oz.States[$k] = $h[$k] } }
         }
     }
-    foreach ($row in @($Oz.Rows.Values)) { Set-OzRowFromState $row }
+    # 169 rows: the window handles clicks and drawing every few rows instead of freezing until all are done
+    $n = 0
+    foreach ($row in @($Oz.Rows.Values)) { Set-OzRowFromState $row; if (++$n % 24 -eq 0) { Update-OzUI } }
     Update-OzPendingBar
     Update-OzActiveCount
     Update-OzFilter
+    Update-OzUI
     if (-not $Rescan) { Initialize-OzProfileCards } else { Update-OzProfileStats }
     Update-OzJournalView
     if ($Oz.ToolsShown) { Update-OzPowerText }
     Start-OzLive
     $Oz.LiveWanted = ($Oz.UI.PageDash.Visibility -eq 'Visible')
     Set-OzBusy $false
-    Start-OzWallPrefetch
     # a page opened during the scan (Games, Tools, Drivers...) is filled now
     if ($Oz.PageRetry) { Request-OzPageFill }
 
@@ -13644,6 +13689,7 @@ function Initialize-OzWindow {
     Set-OzLanguage $Oz.Lang
     Initialize-OzEvents
     $Oz.Timer.Start()
+    Start-OzPool
 }
 
 function Set-OzWindowFit {
