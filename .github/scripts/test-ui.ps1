@@ -174,7 +174,7 @@ Set-Phase 'window opens, startup scan'
 $win.Show()
 Wait-Ui 500
 Wait-Idle 180
-$script:Speed.Add([pscustomobject]@{ Step = 'startup until ready'; Freeze = [int]$script:Beat.Max; Done = [int]($script:Clock.Elapsed.TotalMilliseconds - $t0); Budget = 0 })
+$script:Speed.Add([pscustomobject]@{ Step = 'startup until ready'; Freeze = [int]$script:Beat.Max; Done = [int]($script:Clock.Elapsed.TotalMilliseconds - $t0); Budget = 2500 })
 # memory the whole app uses once it is ready (window, background runspaces, all pages built later)
 [GC]::Collect()
 $script:MemReady = [int]([Diagnostics.Process]::GetCurrentProcess().WorkingSet64 / 1MB)

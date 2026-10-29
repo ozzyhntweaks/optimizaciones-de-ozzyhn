@@ -2,6 +2,14 @@
 
 Each release on the [Releases page](https://github.com/ozzyhntweaks/optimizaciones-de-ozzyhn/releases) uses its section below as release notes. To release: add a section for the new version at the top, set `$Oz.Version` in `ozzyhn.ps1` to match, and push to `main`. Only the newest release stays on the Releases page; older ones are removed when a new one is published, and their notes stay here.
 
+## 1.5.1
+
+* **Smooth on slow and old PCs too.** Every release is now also tested on a simulated weak PC (the app gets a single CPU core, and the test machine has no graphics card):
+  * **The window always gets the CPU first.** Background scans run below normal priority, so clicks, hover and scrolling stay quick while they work. On one core a THEMES click takes about 20-70 ms, the same as on a fast PC, and pages you opened before come back at once.
+  * **No freeze right after the window opens.** The tweak list is read and the scan is started while the console still says "Loading the interface...", so the window you see never waits for it.
+  * **Light visuals** turn on by themselves when Windows draws without a graphics card (old or missing driver, remote desktop, virtual PC), when Windows animations are turned off, or on a CHEAP PC: no title bar animation, no glow on the big buttons and a plainer background. Same layout and colors; the log says when and why.
+* New automatic check on real Windows before every release: on one CPU core the window must stay responsive (limits per click, per page and in the middle of each group of clicks). The speed table also shows memory use (about 300 MB once ready).
+
 ## 1.5.0
 
 * **The window is smooth again.** 1.4 made clicking through the pages slow, most of all THEMES. Now:

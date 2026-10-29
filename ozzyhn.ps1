@@ -29,7 +29,7 @@
 
 #region ============================ STATE ============================
 $Oz = [hashtable]::Synchronized(@{})
-$Oz.Version   = '1.5.0'
+$Oz.Version   = '1.5.1'
 $Oz.AppName   = 'Optimizaciones de Ozzyhn'
 $Oz.Brand     = 'OZZYHN TWEAKS'
 $Oz.RepoOwner = 'ozzyhntweaks'
@@ -358,8 +358,9 @@ function Start-OzPool {
     # and takes a moment, which used to freeze the window just as the startup scan began
     if ($Oz.Pool) { return }
     try {
-        # three runspaces: one for each part of the startup scan, all made in the background
-        $p = New-OzPool $true -NoOpen -Min 3
+        # all four runspaces are kept (the most the app uses at once). A missing one is made on the
+        # thread that asks for it, which froze the window for seconds on busy or slow PCs.
+        $p = New-OzPool $true -NoOpen -Min 4
         $Oz.PoolOpening = $p.BeginOpen($null, $null)
         $Oz.Pool = $p
     } catch { $Oz.Pool = $null; $Oz.PoolOpening = $null }
@@ -13736,6 +13737,8 @@ function Start-OzScanEarly {
         Initialize-OzProfiles
         $Oz.CatalogReady = $true
         $Oz.ScanWorkers = New-OzScanWorkers
+        # the fourth runspace: the wallpaper for THEMES (and later the live stats) use it
+        Start-OzWallPrefetch
     } catch { $Oz.ScanWorkers = $null }
 }
 
@@ -13764,7 +13767,7 @@ function Invoke-OzScan {
 
     $hw = Wait-OzWorker $wHw (T 'Scanning hardware...')
     Step-OzProfile 'scan: waited for the hardware scan'
-    Start-OzWallPrefetch
+    if (-not $Oz.WallPrefetchWorker) { Start-OzWallPrefetch }
     $sys = @($hw | Where-Object { $_.PSObject.Properties['OS'] }) | Select-Object -First 1
     $dnsObj = @($hw | Where-Object { $_.PSObject.Properties['Kind'] -and $_.Kind -eq 'Dns' }) | Select-Object -First 1
     if (-not $sys) { throw (T 'The hardware scan did not return a result.') }
