@@ -35,6 +35,38 @@ $script:Problems = New-Object System.Collections.Generic.List[string]
 function Fail([string]$Msg) { $script:Problems.Add($Msg); Write-Host "::error::$Msg" }
 function Pass([string]$Msg) { Write-Host "PASS  $Msg" -ForegroundColor Green }
 
+# Watchdog: a second PowerShell that, if this test is still running after a while, says what it was
+# doing, which windows are open (a stuck dialog) and which threads use the CPU, saves a picture of
+# the screen, then stops it. A hang becomes a failure that explains itself.
+$script:PhaseFile = Join-Path $work 'phase.txt'
+function Set-Phase([string]$Text) { try { [IO.File]::WriteAllText($script:PhaseFile, $Text) } catch { } }
+Set-Phase 'start'
+$dogMinutes = if ($Weak) { 10 } else { 14 }
+$dog = @'
+param([int]$TestPid, [string]$PhaseFile, [string]$Shots, [int]$Minutes)
+Start-Sleep -Seconds ($Minutes * 60)
+$p = Get-Process -Id $TestPid -ErrorAction SilentlyContinue
+if (-not $p) { return }
+$phase = try { [IO.File]::ReadAllText($PhaseFile) } catch { '?' }
+$wins = @(Get-Process | Where-Object { $_.MainWindowTitle } | ForEach-Object { '{0}: {1}' -f $_.ProcessName, $_.MainWindowTitle }) -join ' | '
+$thr = @($p.Threads | Sort-Object TotalProcessorTime -Descending | Select-Object -First 6 | ForEach-Object { 'thread {0} {1} {2} cpu {3:N1}s {4}' -f $_.Id, $_.PriorityLevel, $_.ThreadState, $_.TotalProcessorTime.TotalSeconds, $(if ($_.ThreadState -eq 'Wait') { $_.WaitReason }) }) -join ' | '
+Write-Host ('::error::UI test still running after {0} min. Last step: {1}. Process CPU {2:N0}s. Windows: {3}. Threads: {4}' -f $Minutes, $phase, $p.TotalProcessorTime.TotalSeconds, $wins, $thr)
+if ($Shots) {
+    try {
+        Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+        $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+        $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size); $g.Dispose()
+        $bmp.Save((Join-Path $Shots 'hang.png'), [System.Drawing.Imaging.ImageFormat]::Png); $bmp.Dispose()
+    } catch { }
+}
+Stop-Process -Id $TestPid -Force
+'@
+$dogFile = Join-Path $work 'watchdog.ps1'
+[IO.File]::WriteAllText($dogFile, $dog)
+$dogArgs = '-NoProfile -ExecutionPolicy Bypass -File "{0}" -TestPid {1} -PhaseFile "{2}" -Shots "{3}" -Minutes {4}' -f $dogFile, $PID, $script:PhaseFile, $Shots, $dogMinutes
+$script:Dog = Start-Process -FilePath "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -ArgumentList $dogArgs -NoNewWindow -PassThru
+
 # One CPU core for the window, its drawing and every background scan, like a cheap or old laptop
 $script:BudgetScale = 1
 if ($Weak) {
@@ -97,6 +129,7 @@ function Set-Size([int]$W, [int]$H) {
 }
 
 # ---------- speed: how long each click keeps the window from answering ----------
+Set-Phase 'speed: how long each click keeps the window from answering'
 # A timer beats every few milliseconds on the window's thread. The longest gap between two beats
 # while a click is handled is how long the window was frozen (no hover, no scrolling, no clicks).
 $script:Clock = [Diagnostics.Stopwatch]::StartNew()
@@ -112,6 +145,7 @@ $meter.Add_Tick({
 $meter.Start()
 $script:Speed = New-Object System.Collections.Generic.List[object]
 function Measure-Click([string]$Name, [scriptblock]$Do, [int]$Budget = 0) {
+    Set-Phase "speed: $Name"
     Wait-Ui 150
     if ($null -ne $Oz.Profile) { $Oz.Profile.Add("--- $Name|0"); $Oz.ProfileLast = [Diagnostics.Stopwatch]::GetTimestamp() }
     $script:Beat.Last = $script:Clock.Elapsed.TotalMilliseconds
@@ -128,6 +162,7 @@ function Measure-Click([string]$Name, [scriptblock]$Do, [int]$Budget = 0) {
     $script:Speed.Add([pscustomobject]@{ Step = $Name; Freeze = [int]$freeze; Done = [int]($t2 - $t0); Budget = $Budget })
 }
 # ---------- open the window and let the startup scan finish ----------
+Set-Phase 'open the window and let the startup scan finish'
 # (measured too: the user can already click while the hardware scan runs)
 $script:Beat.Last = $script:Clock.Elapsed.TotalMilliseconds
 $script:Beat.Max = 0.0
@@ -135,6 +170,7 @@ $t0 = $script:Clock.Elapsed.TotalMilliseconds
 # the app's own timing marks (Step-OzProfile) during startup and the first visit of each page
 $Oz.Profile = New-Object System.Collections.Generic.List[string]
 $Oz.ProfileLast = [Diagnostics.Stopwatch]::GetTimestamp()
+Set-Phase 'window opens, startup scan'
 $win.Show()
 Wait-Ui 500
 Wait-Idle 180
@@ -196,6 +232,7 @@ foreach ($m in @($Oz.Profile)) { $a = $m -split '\|'; $script:Speed.Add([pscusto
 $Oz.Profile = $null
 # Where the time goes: each part on its own (window's thread, no waiting)
 function Measure-Part([string]$Name, [scriptblock]$Do) {
+    Set-Phase "part: $Name"
     Wait-Ui 50
     $sw = [Diagnostics.Stopwatch]::StartNew()
     & $Do
@@ -256,6 +293,7 @@ if ($Weak) {
     # only the speed part runs for the weak PC
     $win.Close()
     Wait-Ui 300
+    try { Stop-Process -Id $script:Dog.Id -Force -ErrorAction SilentlyContinue } catch { }
     if ($script:Problems.Count) { Write-Host "$($script:Problems.Count) problem(s)"; exit 1 }
     Write-Host 'Weak PC speed test passed' -ForegroundColor Green
     exit 0
@@ -286,6 +324,7 @@ Set-Size 1320 840
 if ($Oz.UI.NavProfileCard.Visibility -ne 'Visible') { Fail 'normal size: the profile card in the menu should be shown' }
 
 # ---------- CLEAN UP FILES on the Tools page (scan only, nothing is deleted) ----------
+Set-Phase 'CLEAN UP FILES on the Tools page (scan only, nothing is deleted)'
 $Oz.UI.NavTools.IsChecked = $true
 Wait-Ui 300
 $driveBoxes = @($Oz.UI.CleanDrivePanel.Children | Where-Object { $_ -is [System.Windows.Controls.CheckBox] })
@@ -326,6 +365,7 @@ else { Pass "cleanup: every drive scanned, other drives offer only their Recycle
 Save-Shot 'tools-cleanup-all-drives' $Oz.UI.CleanList.Parent
 
 # ---------- THEMES page: every control, both tabs, a few settings, Spanish ----------
+Set-Phase 'THEMES page: every control, both tabs, a few settings, Spanish'
 $Oz.UI.NavThemes.IsChecked = $true
 Wait-Ui 400
 if ($Oz.ThemesShown) { Pass "THEMES page built (Rainmeter installed: $([bool]$Oz.Rainmeter.Installed))" } else { Fail 'THEMES page was not built' }
@@ -401,6 +441,7 @@ Save-Shot 'laptop-themes'
 Set-Size 1320 840
 
 # ---------- battery wear from powercfg's report (laptops whose WMI battery data is empty) ----------
+Set-Phase 'battery wear from powercfg''s report (laptops whose WMI battery data is empty)'
 $sample = '<?xml version="1.0" encoding="utf-8"?><BatteryReport xmlns="http://schemas.microsoft.com/battery/2012"><Batteries><Battery><Id>Primary</Id><DesignCapacity>83000</DesignCapacity><FullChargeCapacity>74700</FullChargeCapacity><CycleCount>12</CycleCount></Battery></Batteries></BatteryReport>'
 $cap = Read-OzBatteryReport $sample
 if ($cap -and $cap.Design -eq 83000 -and $cap.Full -eq 74700) { Pass 'battery report: design and full-charge capacity read' } else { Fail "battery report read wrong: $($cap | ConvertTo-Json -Compress)" }
@@ -411,6 +452,7 @@ $sheet = Get-OzSpecSheet $Oz.Sys
 if ($sheet -notmatch 'wear %') { Pass 'spec sheet never prints an empty wear value' } else { Fail 'spec sheet printed "wear %" with no number' }
 
 # ---------- Ctrl+F ----------
+Set-Phase 'Ctrl+F'
 $Oz.UI.NavDash.IsChecked = $true
 Wait-Ui 200
 Invoke-OzSearchShortcut
@@ -418,6 +460,7 @@ Wait-Ui 300
 if ($Oz.UI.PageTweaks.Visibility -eq 'Visible') { Pass 'Ctrl+F opens the tweak search' } else { Fail 'Ctrl+F did not open TWEAKS' }
 
 # ---------- Spanish ----------
+Set-Phase 'Spanish'
 Set-OzLanguage 'es'
 Wait-Ui 300
 foreach ($p in 'Dash', 'Tweaks', 'Games', 'Backup') {
@@ -431,6 +474,7 @@ Set-OzLanguage 'en'
 Wait-Ui 300
 
 # ---------- dialogs (closed automatically; a picture of each is saved) ----------
+Set-Phase 'dialogs (closed automatically; a picture of each is saved)'
 $script:DialogSeen = New-Object System.Collections.Generic.List[string]
 $closer = New-Object System.Windows.Threading.DispatcherTimer
 $closer.Interval = [TimeSpan]::FromMilliseconds(400)
@@ -463,6 +507,7 @@ $closer.Stop()
 if ($script:DialogSeen.Count -eq $expect) { Pass "themed dialogs and results card ($expect)" } else { Fail "Expected $expect dialogs, saw $($script:DialogSeen.Count)" }
 
 # ---------- Games page with a test game ----------
+Set-Phase 'Games page with a test game'
 $cfg = Join-Path $work 'videoconfig.txt'
 [IO.File]::WriteAllText($cfg, "`"VideoConfig`"`r`n{`r`n`t`"setting.fullscreen`"`t`t`"1`"`r`n`t`"setting.mat_vsync_mode`"`t`t`"1`"`r`n`t`"setting.dvs_enable`"`t`t`"0`"`r`n`t`"setting.ssao_enabled`"`t`t`"1`"`r`n}`r`n")
 $apex = Get-OzGameCatalog | Where-Object Id -EQ 'apex'
@@ -499,6 +544,7 @@ Save-Shot 'laptop-games-test-game'
 if ($Oz.UI.GamesPanel.Children.Count -eq 6) { Pass 'Games page shows all 6 games' } else { Fail "Games page shows $($Oz.UI.GamesPanel.Children.Count) cards" }
 
 # ---------- close ----------
+Set-Phase 'close'
 $win.Close()
 Wait-Ui 300
 
@@ -506,6 +552,7 @@ $errLines = @(Get-Content -LiteralPath $Oz.LogFile -ErrorAction SilentlyContinue
 foreach ($l in $errLines) { Fail "App logged an error: $l" }
 Write-Host '--- app log (warnings) ---'
 Get-Content -LiteralPath $Oz.LogFile -ErrorAction SilentlyContinue | Where-Object { $_ -match '\[WARN\]' } | Select-Object -First 40 | ForEach-Object { Write-Host $_ }
+try { Stop-Process -Id $script:Dog.Id -Force -ErrorAction SilentlyContinue } catch { }
 if ($script:Problems.Count) { Write-Host "$($script:Problems.Count) problem(s)"; exit 1 }
 Write-Host 'UI test passed' -ForegroundColor Green
 # GitHub Actions fails the step on the last native command's exit code (powercfg returns 1 on a PC
