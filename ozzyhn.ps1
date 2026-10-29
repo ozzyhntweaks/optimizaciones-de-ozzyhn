@@ -13700,29 +13700,17 @@ function Initialize-OzEvents {
 #endregion
 
 #region ============================ STARTUP ============================
-function Invoke-OzScan {
-    # Hardware scan and tweak detection run at the same time on background runspaces,
-    # while the window builds the tweak list. Nothing here blocks the window.
-    param([switch]$Rescan)
-    Set-OzBusy $true (T 'Scanning hardware: CPU, GPU, RAM, storage, board, battery...')
+function New-OzScanWorkers {
+    # Starts the three parts of the scan on background runspaces: hardware, and the state of every
+    # tweak (slow ones with their own detection, and the rest)
     $Oz.NoThermal = $false
     $Oz.EeeCache = $null
     $Oz.NicPropCache = @{}
-    [void](Read-OzJournal)
-    Step-OzProfile 'scan: start, journal'
-    if (-not $Rescan) {
-        Initialize-OzCatalog
-        $Oz.TweakIndex = @{}
-        foreach ($t in $Oz.Tweaks) { $Oz.TweakIndex[$t.Id] = $t }
-        Initialize-OzProfiles
-        Step-OzProfile 'scan: tweak catalog'
-        Update-OzUI
-    }
     $slow = @($Oz.Tweaks | Where-Object { $_.Detect })
     $fast = @($Oz.Tweaks | Where-Object { -not $_.Detect })
     [void](Get-OzPool)
     Step-OzProfile 'scan: background runspaces ready'
-    $wHw = Start-OzWorker -ScriptBlock {
+    $hw = Start-OzWorker -ScriptBlock {
         $s = Get-OzSystemInfo
         try { $s.StartupCount = @(Get-OzStartupApps | Where-Object Enabled).Count } catch { }
         $s
@@ -13730,9 +13718,46 @@ function Invoke-OzScan {
         try { $dns = Get-OzCurrentDns } catch { }
         [pscustomobject]@{ Kind = 'Dns'; Value = $dns }
     }
-    $wSlow = Start-OzWorker -ArgumentList @(, $slow) -ScriptBlock { param($list) [void](Get-OzEthernetPowerProps); Get-OzAllStates $list }
-    $wFast = Start-OzWorker -ArgumentList @(, $fast) -ScriptBlock { param($list) Get-OzAllStates $list }
+    $sl = Start-OzWorker -ArgumentList @(, $slow) -ScriptBlock { param($list) [void](Get-OzEthernetPowerProps); Get-OzAllStates $list }
+    $fa = Start-OzWorker -ArgumentList @(, $fast) -ScriptBlock { param($list) Get-OzAllStates $list }
     Step-OzProfile 'scan: workers started'
+    @{ Hw = $hw; Slow = $sl; Fast = $fa }
+}
+
+function Start-OzScanEarly {
+    # Before the window appears (the console still says "Loading the interface..."): reads the tweak
+    # list and starts the scan. Starting background runspaces can hold the calling thread for a
+    # while on a PC with one or two slow cores; done here, it never freezes a window you can see.
+    try {
+        [void](Read-OzJournal)
+        Initialize-OzCatalog
+        $Oz.TweakIndex = @{}
+        foreach ($t in $Oz.Tweaks) { $Oz.TweakIndex[$t.Id] = $t }
+        Initialize-OzProfiles
+        $Oz.CatalogReady = $true
+        $Oz.ScanWorkers = New-OzScanWorkers
+    } catch { $Oz.ScanWorkers = $null }
+}
+
+function Invoke-OzScan {
+    # Hardware scan and tweak detection run at the same time on background runspaces,
+    # while the window builds the tweak list. Nothing here blocks the window.
+    param([switch]$Rescan)
+    Set-OzBusy $true (T 'Scanning hardware: CPU, GPU, RAM, storage, board, battery...')
+    [void](Read-OzJournal)
+    Step-OzProfile 'scan: start, journal'
+    if (-not $Rescan -and -not $Oz.CatalogReady) {
+        Initialize-OzCatalog
+        $Oz.TweakIndex = @{}
+        foreach ($t in $Oz.Tweaks) { $Oz.TweakIndex[$t.Id] = $t }
+        Initialize-OzProfiles
+        Step-OzProfile 'scan: tweak catalog'
+        Update-OzUI
+    }
+    # started before the window appeared (Start-OzScanEarly), or now for a rescan
+    $ws = if (-not $Rescan -and $Oz.ScanWorkers) { $Oz.ScanWorkers } else { New-OzScanWorkers }
+    $Oz.ScanWorkers = $null
+    $wHw = $ws.Hw; $wSlow = $ws.Slow; $wFast = $ws.Fast
 
     if (-not $Rescan) { Initialize-OzTweakList }
     Step-OzProfile 'scan: tweak list built'
@@ -13814,6 +13839,7 @@ function Initialize-OzWindow {
     $why = Test-OzLightVisuals
     if ($why) { Set-OzLightVisuals $why }
     Start-OzPool
+    Start-OzScanEarly
 }
 
 function Set-OzWindowFit {
