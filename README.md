@@ -55,8 +55,9 @@ Then start the file you checked from PowerShell as Administrator: `powershell -E
 | Tab | What you get |
 |---|---|
 | **Dashboard** | CPU-Z-style spec sheet (CPU, cores and cache, GPU and VRAM, RAM type, speed and channels, drives, board, BIOS, battery wear, VBS/HVCI, Secure Boot, TPM). Live CPU load, real clock speed, RAM, temperature and uptime. **OZ Score** and tier: **CHEAP / BUDGET / MID-RANGE / FANCY**. Smart insights such as an HDD system drive, single-channel RAM, XMP probably off, old GPU driver, too many startup apps, or a hot laptop. |
-| **Tweaks** | **129 tweaks in 14 categories**. Each one detects its own state, so the switches show what is actually active. Flip what you want, then apply. Search, filters, *Recommended for this PC* badges and risk labels (Safe, Moderate, Advanced, Danger). |
+| **Tweaks** | **169 tweaks in 15 categories**. Each one detects its own state, so the switches show what is actually active. Flip what you want, then apply. Search, filters, *Recommended for this PC* badges and risk labels (Safe, Moderate, Advanced, Danger). |
 | **Games** | Apex Legends, Fortnite, Counter-Strike 2, VALORANT, Overwatch 2 and Rainbow Six Siege X. Finds each game and its launcher, shows its icon, reads its own video settings file and shows what to change, lists the competitive menu settings for *this* PC and gives the launch options to copy for Steam, EA app or Epic. Game files are never changed. |
+| **Themes** | Desktop themes for [Rainmeter](https://www.rainmeter.net): a big clock in five styles (Horizon, Blade, Stack, Pulse, Minimal) that **picks its text color from the part of the wallpaper under it**, a status bar (date, time, CPU, RAM, network, volume, battery), a dock with your installed apps and a wallpaper picker with slanted cards and color filters. Five looks, nine positions, sizes for any screen scaling, English and Spanish, a live preview, six original wallpapers drawn by the app, and **REMOVE THEME** to take it all away. |
 | **Profiles** | One click, resolved for this PC: **Auto-Tune**, **Revive Cheap PC**, **Max Performance**, **Cool & Quiet**, **Competitive Gaming**, **Privacy Max**, **Clean Windows UI**. *Preview* stages the changes for review; *Apply* does it now. |
 | **Debloat** | Lists only the bloat that is actually installed (66 known packages), with recommended ones pre-selected. Core apps (Store, Calculator, Notepad, Terminal, Security) are protected and never shown. Also includes the official Edge uninstall where Microsoft allows it. |
 | **Drivers** | Official download links for the detected NVIDIA / AMD / Intel GPU, the chipset, the laptop or board maker and the network adapter. It also lists devices with missing drivers and the age of key drivers, and links to NVCleanstall and DDU for clean GPU installs. |
@@ -65,7 +66,9 @@ Then start the file you checked from PowerShell as Administrator: `powershell -E
 
 ### Tweak categories
 
-Privacy & Telemetry (17), AI & Copilot (4), Performance (14), Gaming & Input (9), Power & Thermals (6), Services (12), Network & Latency (7), Explorer & UI (16), Start, Taskbar & Search (14), Edge, OneDrive & Store (7), Windows Update (5), Storage & NTFS (6), Security Hardening (7), Danger Zone (5).
+Privacy & Telemetry (19), AI & Copilot (8), Performance (14), Gaming & Input (11), Power & Thermals (8), Services (15), Network & Latency (9), Explorer & UI (27), Start, Taskbar & Search (16), Edge, OneDrive & Store (7), Installed Apps (3), Windows Update (7), Storage & NTFS (7), Security Hardening (13), Danger Zone (5).
+
+Tweaks for hardware or apps you do not have stay hidden: the Bluetooth and fingerprint services only show up on PCs without that hardware, and the Chrome, Firefox and Office switches only when that app is installed.
 
 ### Fast **and** cool
 
@@ -86,6 +89,7 @@ Undervolting and BIOS settings (XMP / EXPO, fan curves) cannot be changed safely
 * **Danger Zone** settings (Defender real-time, SmartScreen, Memory Integrity, VBS, CPU mitigations) are **never part of any profile** and always ask for confirmation.
 * Hardware-specific tweaks hide themselves where they do not apply: laptop-only, desktop-only, Windows 11-only, NVIDIA/AMD-only and VMs.
 * No telemetry, no ads, no downloads of other tools. Logs stay in `C:\ProgramData\Ozzyhn\logs`.
+* **THEMES** never downloads or installs Rainmeter: it opens the official site and you install it yourself. Rainmeter is always started as you, not as administrator, so dock clicks and the skins' own scripts never get admin rights, and the app never runs those scripts itself. It only writes inside `Rainmeter\Skins\OZZYHN` (and `Pictures\OZZYHN Wallpapers` when you ask for wallpapers), refuses to write through junctions or symbolic links, and REMOVE THEME deletes only that skins folder.
 * The data folder `C:\ProgramData\Ozzyhn` is **locked so only administrators can change it**. Otherwise another program without admin rights could plant an undo journal and get the app to apply it with admin rights.
 * Every change to the code is checked automatically for downloads, `Invoke-Expression`, antivirus exclusions and PSScriptAnalyzer security rules before it can be released. See [SECURITY.md](SECURITY.md) to report a problem privately.
 
@@ -96,6 +100,8 @@ Undervolting and BIOS settings (XMP / EXPO, fan curves) cannot be changed safely
 ## FAQ
 
 **Will it break Windows Update?** No. Updates are never disabled. There are optional switches to delay feature updates, stop auto-restarts or skip driver updates.
+
+**Do I need Rainmeter for the THEMES page?** Yes. Rainmeter is a free, open-source desktop customization tool. Press GET RAINMETER on the THEMES page to open its official site, install it, then press CHECK AGAIN. You can set the theme up and see the preview before installing it.
 
 **Can I undo everything?** Yes. Use *Backup & Undo → Revert everything*, or turn individual switches back off. Removed apps can be reinstalled from the Microsoft Store.
 
@@ -109,7 +115,7 @@ Undervolting and BIOS settings (XMP / EXPO, fan curves) cannot be changed safely
 
 ## What's new
 
-**1.3.0:** **Clean up files** replaces Quick clean: pick drives, scan, and choose exactly what to delete, with sizes and folders shown and recommended items pre-ticked. **1.2.1:** important fix: **Quick clean** no longer follows links to other drives, only empties the Windows drive's Recycle Bin, and asks before it starts. **1.2.0:** new **Games** page (competitive settings, settings-file check and launch options for six shooters), the window fits small laptop screens, neon pop-ups, a results card after applying, and Ctrl+F search. **1.1.2:** the double-click launcher always runs the newest release, and every tweak is tested on real Windows (apply, check, revert, check) before each release. **1.1.1:** security fix for the data folder, and launching from Releases. Full history in [CHANGELOG.md](CHANGELOG.md).
+**1.4.0:** new **THEMES** page (Rainmeter clock that matches your wallpaper, status bar, dock, wallpaper picker, original wallpapers) and **40 new tweaks** (AI in Paint and Notepad, laptop standby, hardware-aware services, Chrome / Firefox / Office telemetry, security hardening, update control, Explorer and right-click menu cleanup). **1.3.0:** **Clean up files** replaces Quick clean: pick drives, scan, and choose exactly what to delete, with sizes and folders shown and recommended items pre-ticked. **1.2.1:** important fix: **Quick clean** no longer follows links to other drives, only empties the Windows drive's Recycle Bin, and asks before it starts. **1.2.0:** new **Games** page (competitive settings, settings-file check and launch options for six shooters), the window fits small laptop screens, neon pop-ups, a results card after applying, and Ctrl+F search. **1.1.2:** the double-click launcher always runs the newest release, and every tweak is tested on real Windows (apply, check, revert, check) before each release. **1.1.1:** security fix for the data folder, and launching from Releases. Full history in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -122,6 +128,8 @@ Everything is in one file, `ozzyhn.ps1`. The logo and profile picture are in `/a
 ## En español
 
 **Optimizaciones de Ozzyhn** (por **OZZYHN TWEAKS**) analiza tu PC (CPU, GPU, RAM, disco, placa y batería) y detecta si es de escritorio o portátil, si usa Windows 10 u 11 y si es una PC **barata, económica, de gama media o de gama alta**. Luego la optimiza según ese resultado. Cada interruptor muestra el estado real de Windows y todo se puede deshacer. La app está **en español y en inglés**: cambia con el botón **EN | ES** de la barra de título.
+
+La página **Temas** crea temas de escritorio para Rainmeter: un reloj en cinco estilos que elige el color del texto según la parte del fondo que tiene debajo, una barra de estado, un dock con tus apps y un selector de fondos con filtros de color. La app nunca descarga Rainmeter: te lleva al sitio oficial. Todo se quita con **QUITAR TEMA**.
 
 La página **Juegos** revisa Apex Legends, Fortnite, Counter-Strike 2, VALORANT, Overwatch 2 y Rainbow Six Siege X: detecta el juego y su launcher, lee su archivo de ajustes de video para decirte qué cambiar, muestra los ajustes competitivos para tu PC y te da las opciones de lanzamiento para copiar. Nunca modifica los archivos de tus juegos.
 

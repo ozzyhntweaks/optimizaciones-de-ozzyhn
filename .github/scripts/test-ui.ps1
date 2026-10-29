@@ -92,7 +92,7 @@ Wait-Ui 500
 Wait-Idle 180
 if ($Oz.Sys) { Pass "hardware scan finished: $($Oz.Sys.Score.TierName), $($Oz.Rows.Count) tweak rows" } else { Fail 'The hardware scan did not finish' }
 
-$pages = 'Dash', 'Tweaks', 'Profiles', 'Games', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log'
+$pages = 'Dash', 'Tweaks', 'Profiles', 'Games', 'Themes', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log'
 foreach ($size in @(@('normal', 1320, 840), @('laptop', 1093, 574))) {
     Set-Size $size[1] $size[2]
     foreach ($p in $pages) {
@@ -154,6 +154,35 @@ if (@($otherItems | Where-Object { $_.Tag.Id -ne 'bin' }).Count) { Fail 'cleanup
 elseif (@($otherItems | Where-Object IsChecked).Count) { Fail "cleanup: another drive's Recycle Bin was ticked by the scan" }
 else { Pass "cleanup: every drive scanned, other drives offer only their Recycle Bin ($($otherItems.Count))" }
 Save-Shot 'tools-cleanup-all-drives' $Oz.UI.CleanList.Parent
+
+# ---------- THEMES page: every control, both tabs, a few settings, Spanish ----------
+$Oz.UI.NavThemes.IsChecked = $true
+Wait-Ui 400
+if ($Oz.ThemesShown) { Pass "THEMES page built (Rainmeter installed: $([bool]$Oz.Rainmeter.Installed))" } else { Fail 'THEMES page was not built' }
+$general = @($Oz.UI.ThemeClockPanel.Children).Count
+$Oz.UI.ThemeTabLook.IsChecked = $true
+Wait-Ui 300
+$look = @($Oz.UI.ThemeClockPanel.Children).Count
+if ($general -ge 5 -and $look -ge 5) { Pass "clock settings: $general rows (general), $look rows (appearance)" } else { Fail "clock settings rows: $general general, $look appearance" }
+Save-Shot 'themes-appearance' $Oz.UI.PageThemes.Content
+foreach ($pair in @(@('Style', 'Blade'), @('Pos', 'BR'), @('Look', 'neon'), @('AutoInk', $false), @('Style', 'Pulse'), @('AutoInk', $true), @('InkMode', 'threshold'), @('Scale', 150), @('Bar', $false), @('Pos', 'TL'))) {
+    Set-OzThemeValue $pair[0] $pair[1]
+    Wait-Ui 100
+}
+if ($Oz.ThemeDirty -and $Oz.UI.ThemeStatus.Text) { Pass "settings changes are marked as not applied: $($Oz.UI.ThemeStatus.Text)" } else { Fail 'THEMES page did not mark changes as not applied' }
+if (@($Oz.UI.ThemePreviewLayer.Children).Count -ge 2) { Pass 'theme preview draws the clock and dock' } else { Fail "theme preview has $(@($Oz.UI.ThemePreviewLayer.Children).Count) parts" }
+Save-Shot 'themes-changed' $Oz.UI.PageThemes.Content
+$Oz.UI.ThemeTabGeneral.IsChecked = $true
+Wait-Ui 300
+Set-OzLanguage 'es'
+Wait-Ui 300
+if ($Oz.UI.NavThemes.Content -eq 'Temas') { Pass 'THEMES page in Spanish' } else { Fail "Spanish: the Themes button says '$($Oz.UI.NavThemes.Content)'" }
+Save-Shot 'es-themes' $Oz.UI.PageThemes.Content
+Set-OzLanguage 'en'
+Wait-Ui 300
+Set-Size 1093 574
+Save-Shot 'laptop-themes'
+Set-Size 1320 840
 
 # ---------- Ctrl+F ----------
 $Oz.UI.NavDash.IsChecked = $true

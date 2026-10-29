@@ -2,6 +2,36 @@
 
 Each release on the [Releases page](https://github.com/ozzyhntweaks/optimizaciones-de-ozzyhn/releases) uses its section below as release notes. To release: add a section for the new version at the top, set `$Oz.Version` in `ozzyhn.ps1` to match, and push to `main`.
 
+## 1.4.0
+
+* **New THEMES page: desktop themes for [Rainmeter](https://www.rainmeter.net).** Inspired by minimal desktop setups, rebuilt from scratch for this app:
+  * **A clock in five styles** (Horizon, Blade, Stack, Pulse, Minimal) with a greeting, date and time in English or Spanish.
+  * **Automatic text color.** The clock reads the part of the wallpaper under it (not just the middle of the screen) and picks the most readable of your three colors. BEST CONTRAST measures it; BRIGHTNESS LIMITS uses two limits you set. It follows wallpaper changes, slideshows included.
+  * **Settings in two tabs, like the panels it is modeled on:** position (nine spots), margins, size for this screen's scaling, 24-hour time, date format, style, area read, limits and the three colors, all with a **live preview** on your own wallpaper.
+  * **Status bar** with date and time, CPU, RAM, network, volume (scroll to change, click to mute) and battery on laptops.
+  * **Dock** with the apps installed on this PC (pick them, or add your own). It lifts the icon under the mouse. Apps open as you, never as administrator.
+  * **Wallpaper picker** with slanted cards, color filters (light, dark, warm, cool), scroll to browse and click to set. It reads the folders you choose and makes small previews.
+  * **CREATE OZZYHN WALLPAPERS** draws six original wallpapers (dunes light and night, neon horizon, crimson slash, arctic ridges, hex field) into `Pictures\OZZYHN Wallpapers`.
+  * Five looks: Mono Dark, Mono Light, OZZYHN Neon, Crimson, Arctic.
+  * **REMOVE THEME** unloads the skins and deletes only the OZZYHN skins folder.
+  * The app never downloads Rainmeter: GET RAINMETER opens the official site. Rainmeter is started as you, not as administrator, the app never runs the skins' scripts itself, and it refuses to write through junctions or symbolic links.
+* **40 new tweaks (169 in total)**, each one tested to apply and revert cleanly:
+  * **AI & Copilot:** turn off AI in Paint (Cocreator, Image Creator, generative fill) and in Notepad, block apps from Windows generative AI, stop Edge from downloading its on-device AI model.
+  * **Privacy:** no suggested actions when copying dates or phone numbers, no telemetry from PowerShell 7 and the .NET SDK.
+  * **New category, Installed Apps** (shown only when the app is installed): Chrome without background mode or usage reports, Firefox without telemetry or studies, Office with minimum diagnostic data.
+  * **Security:** block potentially unwanted apps in Defender, turn off proxy auto-discovery (WPAD), AutoPlay off, LSA protection (Windows 11, can be turned off again), block Remote Desktop, Windows Script Host off.
+  * **Windows Update:** stay on your current Windows version, delay monthly updates 7 days.
+  * **Storage:** free the 5-7 GB Windows reserves for updates (great on 64-128 GB drives).
+  * **Power:** no network while asleep on battery (laptops), show the hidden boost mode and core parking settings.
+  * **Services:** Bluetooth and fingerprint / face sign-in services, offered only on PCs without that hardware; mobile hotspot.
+  * **Gaming & Input:** fastest key repeat, the Xbox button no longer opens Game Bar.
+  * **Network:** prefer IPv4 over IPv6, interrupt moderation off on wired adapters (Advanced).
+  * **Explorer & UI:** hide Home, no duplicate USB drives, right-click menu without Give access / Share / Cast or app shortcuts (Ask Copilot, Clipchamp, Photos, Paint, Notepad), no "Look for an app in the Store", hide the Spotlight desktop icon, no window shake, compact view, sharp sign-in background, full-quality wallpaper, detailed copy window.
+  * **Start & taskbar:** never combine taskbar buttons, no search history.
+  * Profiles pick up the new switches where they fit (Privacy Max, Clean Windows UI, Competitive Gaming, Cool & Quiet, Revive Cheap PC on small drives).
+* The menu buttons get a little shorter on short screens, so all ten pages still fit on a 1366x768 laptop.
+* New automatic test on real Windows: it installs Rainmeter from its official release, applies the theme, loads every clock style, lets the picker list the wallpapers, changes the wallpaper to check that the clock switches color, fails on any error or warning in Rainmeter's log, then removes the theme.
+
 ## 1.3.0
 
 * **CLEAN UP FILES replaces QUICK CLEAN** (TOOLS page). Nothing is deleted until you choose it:

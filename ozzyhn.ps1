@@ -14,10 +14,12 @@
        - Scans the PC (CPU, GPU, RAM, storage, board, battery, temps)
        - Detects Desktop / Laptop / VM, Windows 10 / 11, and the PC tier
          (CHEAP, BUDGET, MID-RANGE, FANCY)
-       - 129 reversible tweaks. Each one detects its current state, so the
+       - 169 reversible tweaks. Each one detects its current state, so the
          switches show what is really ON in Windows right now.
        - One-click profiles, debloat, driver recommendations, cleanup,
          repair tools, startup manager, restore points and a full undo log.
+       - Rainmeter desktop themes (clock that matches your wallpaper, status
+         bar, dock, wallpaper picker). Rainmeter itself is never downloaded.
        - English / Espanol interface.
 
      Made by OZZYHN TWEAKS - https://github.com/ozzyhntweaks
@@ -26,7 +28,7 @@
 
 #region ============================ STATE ============================
 $Oz = [hashtable]::Synchronized(@{})
-$Oz.Version   = '1.3.0'
+$Oz.Version   = '1.4.0'
 $Oz.AppName   = 'Optimizaciones de Ozzyhn'
 $Oz.Brand     = 'OZZYHN TWEAKS'
 $Oz.RepoOwner = 'ozzyhntweaks'
@@ -36,6 +38,7 @@ $Oz.RepoName  = 'optimizaciones-de-ozzyhn'
 $Oz.ScriptUrl = 'https://github.com/{0}/{1}/releases/download/v{2}/ozzyhn.ps1' -f $Oz.RepoOwner, $Oz.RepoName, $Oz.Version
 $Oz.RepoUrl   = 'https://github.com/{0}/{1}' -f $Oz.RepoOwner, $Oz.RepoName
 $Oz.ProfileUrl = 'https://github.com/{0}' -f $Oz.RepoOwner
+$Oz.RainmeterUrl = 'https://www.rainmeter.net/'
 $__ozBase     = if ($env:ProgramData) { $env:ProgramData } else { [IO.Path]::GetTempPath() }
 $Oz.DataDir   = Join-Path $__ozBase 'Ozzyhn'
 $Oz.Journal   = Join-Path $Oz.DataDir 'journal.json'
@@ -1160,6 +1163,11 @@ function Get-OzSystemInfo {
         TPM        = if ($tpm) { ([string]$tpm.SpecVersion -split ',')[0] } else { $null }
     }
 
+    # Kinds of devices present (Bluetooth, Biometric...), so tweaks for missing hardware can be offered.
+    # $null when Windows could not list them: then those tweaks stay hidden.
+    $devClasses = $null
+    try { $devClasses = @(Get-CimInstance -ClassName Win32_PnPEntity -Property PNPClass -ErrorAction Stop | ForEach-Object { [string]$_.PNPClass } | Where-Object { $_ } | Sort-Object -Unique) } catch { }
+
     $plan = Get-OzActivePlan
 
     $sys = [pscustomobject]@{
@@ -1173,6 +1181,7 @@ function Get-OzSystemInfo {
         IsLaptop = [bool]$isLaptop
         IsVM     = [bool]$isVM
         Battery  = $batInfo
+        DevClasses = $devClasses
         Security = $secInfo
         Power    = $plan
         Score    = $null
@@ -1557,6 +1566,7 @@ $Oz.Categories = @(
     [pscustomobject]@{ Key = 'Explorer';    Name = 'EXPLORER & UI' }
     [pscustomobject]@{ Key = 'Start';       Name = 'START, TASKBAR & SEARCH' }
     [pscustomobject]@{ Key = 'Apps';        Name = 'EDGE, ONEDRIVE & STORE' }
+    [pscustomobject]@{ Key = 'Installed';   Name = 'INSTALLED APPS' }
     [pscustomobject]@{ Key = 'Update';      Name = 'WINDOWS UPDATE' }
     [pscustomobject]@{ Key = 'Storage';     Name = 'STORAGE & NTFS' }
     [pscustomobject]@{ Key = 'Security';    Name = 'SECURITY HARDENING' }
@@ -1624,6 +1634,39 @@ function Get-OzEthernetPowerProps {
     return $found
 }
 
+function Get-OzNicProps {
+    # Physical adapters that support one advanced property (for example *InterruptModeration), cached per keyword
+    param([string]$Keyword)
+    if ($null -eq $Oz.NicPropCache) { $Oz.NicPropCache = @{} }
+    if ($Oz.NicPropCache.ContainsKey($Keyword)) { return $Oz.NicPropCache[$Keyword] }
+    $found = @()
+    try {
+        foreach ($a in @(Get-NetAdapter -Physical -ErrorAction Stop)) {
+            $p = Get-NetAdapterAdvancedProperty -Name $a.Name -RegistryKeyword $Keyword -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($p) { $found += [pscustomobject]@{ Adapter = $a.Name; Value = [string](@($p.RegistryValue)[0]) } }
+        }
+    } catch { }
+    $Oz.NicPropCache[$Keyword] = $found
+    return $found
+}
+
+function Test-OzAppInstalled {
+    # Desktop apps that some tweaks are only shown for
+    param([ValidateSet('Chrome', 'Firefox', 'Office')][string]$App)
+    $appPaths = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths'
+    switch ($App) {
+        'Chrome' {
+            (Test-Path -LiteralPath "$appPaths\chrome.exe") -or (Test-Path -LiteralPath "$env:ProgramFiles\Google\Chrome\Application\chrome.exe") -or
+            (Test-Path -LiteralPath "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe")
+        }
+        'Firefox' { (Test-Path -LiteralPath "$appPaths\firefox.exe") -or (Test-Path -LiteralPath "$env:ProgramFiles\Mozilla Firefox\firefox.exe") }
+        'Office' {
+            (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration') -or (Test-Path -LiteralPath "$appPaths\WINWORD.EXE") -or
+            (Test-Path -LiteralPath "$appPaths\EXCEL.EXE") -or (Test-Path -LiteralPath "$appPaths\OUTLOOK.EXE")
+        }
+    }
+}
+
 function Get-OzActiveInterfaces {
     $base = 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters\Interfaces'
     @(Get-ChildItem -LiteralPath $base -ErrorAction SilentlyContinue | Where-Object {
@@ -1659,6 +1702,10 @@ function Initialize-OzCatalog {
     $FS   = 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem'
     $Srch = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\Windows Search'
     $AI   = 'SOFTWARE\Policies\Microsoft\Windows\WindowsAI'
+    # The Windows version this PC runs now, for "Stay on your current Windows version"
+    $cvk = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -ErrorAction SilentlyContinue
+    $Oz.PinVersion = @([string]$cvk.DisplayVersion, [string]$cvk.ReleaseId) | Where-Object { $_ -match '^\d{2}H\d$|^\d{4}$' } | Select-Object -First 1
+    $pinProduct = if ([int]$cvk.CurrentBuildNumber -ge 22000) { 'Windows 11' } else { 'Windows 10' }
 
     # =============================== PRIVACY ===============================
     Add-OzTweak -Id 'telemetry-off' -Cat 'Privacy' -Name 'Disable telemetry' -Rec all -Reboot `
@@ -1749,6 +1796,17 @@ function Initialize-OzCatalog {
         -Desc 'Theme, passwords and preferences are no longer synced through your Microsoft account.' `
         -Reg @(@{ P = "$Pol\SettingSync"; N = 'DisableSettingSync'; V = 2 }, @{ P = "$Pol\SettingSync"; N = 'DisableSettingSyncUserOverride'; V = 1 })
 
+    Add-OzTweak -Id 'smart-actions-off' -Cat 'Privacy' -Name 'No suggested actions when copying' -Rec all -MinBuild 22621 `
+        -Desc 'Copying a date, time or phone number no longer pops up suggestions to make a call or add a calendar event.' `
+        -Reg @(@{ P = "$CU\SmartActionPlatform\SmartClipboard"; N = 'Disabled'; V = 1; D = 0 })
+
+    Add-OzTweak -Id 'devtools-telemetry-off' -Cat 'Privacy' -Name 'No telemetry from PowerShell 7 and .NET tools' -Rec all `
+        -Desc 'Sets the official opt-out switches, so PowerShell 7 and the .NET SDK stop sending usage data. Windows PowerShell is not affected.' `
+        -Note 'Applies to programs started after the change.' `
+        -Reg @(@{ P = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment'; N = 'POWERSHELL_TELEMETRY_OPTOUT'; V = '1'; T = 'String' },
+            @{ P = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment'; N = 'DOTNET_CLI_TELEMETRY_OPTOUT'; V = '1'; T = 'String' })
+
+
     # =============================== AI ===============================
     Add-OzTweak -Id 'copilot-off' -Cat 'AI' -Name 'Disable Copilot in Windows' -Rec all -MinBuild 19045 -Explorer `
         -Desc 'Turns off the Windows Copilot sidebar and hides its taskbar button. Remove the Copilot app in DEBLOAT.' `
@@ -1768,6 +1826,27 @@ function Initialize-OzCatalog {
     Add-OzTweak -Id 'edge-sidebar-off' -Cat 'AI' -Name 'Disable Edge sidebar & Copilot pane' -Rec none `
         -Desc 'Removes the Edge sidebar (Copilot, Shopping, Tools). Edge may show "managed by your organization".' `
         -Reg @(@{ P = $Edge; N = 'HubsSidebarEnabled'; V = 0 })
+
+    Add-OzTweak -Id 'paint-ai-off' -Cat 'AI' -Name 'Disable AI in Paint' -Rec all -MinBuild 22621 `
+        -Desc 'Turns off Cocreator, Image Creator and generative fill in Paint (Pro and up honor this policy).' `
+        -Reg @(@{ P = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint'; N = 'DisableCocreator'; V = 1 },
+            @{ P = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint'; N = 'DisableGenerativeFill'; V = 1 },
+            @{ P = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Paint'; N = 'DisableImageCreator'; V = 1 })
+
+    Add-OzTweak -Id 'notepad-ai-off' -Cat 'AI' -Name 'Disable AI in Notepad' -Rec all -MinBuild 22621 `
+        -Desc 'Removes Copilot, Rewrite and Summarize from Notepad. The editor itself is unchanged.' `
+        -Reg @(@{ P = 'HKLM:\SOFTWARE\Policies\WindowsNotepad'; N = 'DisableAIFeatures'; V = 1 })
+
+    Add-OzTweak -Id 'genai-apps-off' -Cat 'AI' -Name 'Block apps from Windows generative AI' -Rec all -MinBuild 26100 `
+        -Desc 'Apps can no longer use the text and image generation built into Windows (Settings > Privacy > Text and image generation).' `
+        -Reg @(@{ P = "$Pol\AppPrivacy"; N = 'LetAppsAccessGenerativeAI'; V = 2 },
+            @{ P = "$CU\CapabilityAccessManager\ConsentStore\generativeAI"; N = 'Value'; V = 'Deny'; T = 'String'; D = 'Allow' })
+
+    Add-OzTweak -Id 'edge-ai-model-off' -Cat 'AI' -Name 'Edge: no on-device AI model' -Rec all `
+        -Desc 'Edge stops downloading its local AI model and deletes it if it is already there. Frees disk space.' `
+        -Note 'Edge will show "managed by your organization" (normal for policies).' `
+        -Reg @(@{ P = $Edge; N = 'GenAILocalFoundationalModelSettings'; V = 1 })
+
 
     # =============================== PERFORMANCE ===============================
     Add-OzTweak -Id 'visual-fx-perf' -Cat 'Performance' -Name 'Visual effects: best performance' -Rec lowend -Explorer `
@@ -1904,6 +1983,16 @@ function Initialize-OzCatalog {
             @{ P = 'HKCU:\Control Panel\Accessibility\ToggleKeys'; N = 'Flags'; V = '58'; T = 'String'; D = '62' },
             @{ P = 'HKCU:\Control Panel\Accessibility\Keyboard Response'; N = 'Flags'; V = '122'; T = 'String'; D = '126' })
 
+    Add-OzTweak -Id 'kb-repeat-fast' -Cat 'Gaming' -Name 'Fastest key repeat' -Rec gaming `
+        -Desc 'A held key starts repeating after the shortest delay, at the fastest rate.' `
+        -Reg @(@{ P = 'HKCU:\Control Panel\Keyboard'; N = 'KeyboardDelay'; V = '0'; T = 'String'; D = '1' },
+            @{ P = 'HKCU:\Control Panel\Keyboard'; N = 'KeyboardSpeed'; V = '31'; T = 'String'; D = '31' })
+
+    Add-OzTweak -Id 'gamebar-button-off' -Cat 'Gaming' -Name 'Xbox button does not open Game Bar' -Rec gaming `
+        -Desc 'Pressing the Xbox button on a controller no longer pops Game Bar over your game. Win+G still opens it.' `
+        -Reg @(@{ P = 'HKCU:\Software\Microsoft\GameBar'; N = 'UseNexusForGameBarEnabled'; V = 0; D = 1 })
+
+
     # =============================== POWER & THERMALS ===============================
     $notVM = { $Oz.Sys -and -not $Oz.Sys.IsVM }
     Add-OzTweak -Id 'plan-perf' -Cat 'Power' -Group 'plan' -Name 'OZZYHN PERFORMANCE power plan' -Rec desktop -Requires $notVM `
@@ -1955,6 +2044,17 @@ function Initialize-OzCatalog {
         -Desc 'Shut down really shuts down: fixes stale drivers, dual-boot and "uptime never resets" issues.' `
         -Reg @(@{ P = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power'; N = 'HiberbootEnabled'; V = 0; D = 1 })
 
+    Add-OzTweak -Id 'standby-net-off' -Cat 'Power' -Name 'No network while asleep on battery' -Rec laptop -Reboot `
+        -Desc 'Modern Standby laptops stop syncing mail and downloading updates while asleep on battery: less drain and heat in a bag.' `
+        -Requires { $Oz.Sys -and $Oz.Sys.IsLaptop } `
+        -Reg @(@{ P = 'HKLM:\SOFTWARE\Policies\Microsoft\Power\PowerSettings\f15576e8-98b7-4186-b944-eafa664402d9'; N = 'DCSettingIndex'; V = 0 })
+
+    Add-OzTweak -Id 'power-unhide' -Cat 'Power' -Name 'Show hidden CPU power settings' -Rec none `
+        -Desc 'Adds "Processor performance boost mode" and core parking to Power Options > Advanced settings, so you can tune them yourself.' `
+        -Reg @(@{ P = 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\be337238-0d82-4146-a960-4f3749d470c7'; N = 'Attributes'; V = 2; D = 1 },
+            @{ P = 'HKLM:\SYSTEM\CurrentControlSet\Control\Power\PowerSettings\54533251-82be-4824-96c1-47b60b740d00\0cc5b647-c1df-4637-891a-dec35c318583'; N = 'Attributes'; V = 0; D = 1 })
+
+
     # =============================== SERVICES ===============================
     Add-OzTweak -Id 'svc-fax' -Cat 'Services' -Name 'Fax service OFF' -Rec all -Desc 'Nobody faxes from a PC.' -Svc @(@{ N = 'Fax'; V = 4; D = 3 })
     Add-OzTweak -Id 'svc-retaildemo' -Cat 'Services' -Name 'Retail Demo service OFF' -Rec all -Desc 'Store-display demo mode.' -Svc @(@{ N = 'RetailDemo'; V = 4; D = 3 })
@@ -1978,6 +2078,18 @@ function Initialize-OzCatalog {
         -Svc @(@{ N = 'WpcMonSvc'; V = 4; D = 3 })
     Add-OzTweak -Id 'svc-smartcard' -Cat 'Services' -Name 'Smart card services OFF' -Rec none -Desc 'Only used by corporate smart-card logins.' `
         -Svc @(@{ N = 'SCardSvr'; V = 4; D = 3 }, @{ N = 'ScDeviceEnum'; V = 4; D = 3 }, @{ N = 'SCPolicySvc'; V = 4; D = 3 })
+
+    Add-OzTweak -Id 'svc-bluetooth' -Cat 'Services' -Name 'Bluetooth services OFF' -Rec all `
+        -Desc 'Only shown when this PC has no Bluetooth radio, so nothing here can use them.' -Note 'Turn this back off before you plug in a Bluetooth adapter.' `
+        -Requires { $Oz.Sys -and $null -ne $Oz.Sys.DevClasses -and @($Oz.Sys.DevClasses) -notcontains 'Bluetooth' } `
+        -Svc @(@{ N = 'bthserv'; V = 4; D = 3 }, @{ N = 'BTAGService'; V = 4; D = 3 }, @{ N = 'BluetoothUserService'; V = 4; D = 3 })
+    Add-OzTweak -Id 'svc-biometric' -Cat 'Services' -Name 'Fingerprint / face sign-in service OFF' -Rec all `
+        -Desc 'Only shown when this PC has no fingerprint reader or Windows Hello camera.' -Note 'Turn this back off before you add a fingerprint reader or face camera.' `
+        -Requires { $Oz.Sys -and $null -ne $Oz.Sys.DevClasses -and @($Oz.Sys.DevClasses) -notcontains 'Biometric' } `
+        -Svc @(@{ N = 'WbioSrvc'; V = 4; D = 3 })
+    Add-OzTweak -Id 'svc-hotspot' -Cat 'Services' -Name 'Mobile hotspot service OFF' -Rec none -Desc 'Only needed to share this PC''s internet with other devices.' `
+        -Svc @(@{ N = 'icssvc'; V = 4; D = 3 })
+
 
     # =============================== NETWORK ===============================
     Add-OzTweak -Id 'net-throttle-off' -Cat 'Network' -Name 'Disable network throttling' -Rec gaming `
@@ -2050,6 +2162,34 @@ function Initialize-OzCatalog {
         -Apply { Set-NetTeredoConfiguration -Type Disabled -ErrorAction Stop } `
         -Revert { Set-NetTeredoConfiguration -Type Default -ErrorAction Stop }
 
+    Add-OzTweak -Id 'ipv4-prefer' -Cat 'Network' -Name 'Prefer IPv4 over IPv6' -Risk Moderate -Rec none -Reboot `
+        -Desc 'Windows tries IPv4 first. Fixes slow first connections on networks with broken IPv6, while IPv6 keeps working.' `
+        -Note 'Microsoft recommends keeping IPv6 on. This only changes which one is tried first.' `
+        -Reg @(@{ P = 'HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters'; N = 'DisabledComponents'; V = 32 })
+
+    Add-OzTweak -Id 'nic-intmod-off' -Cat 'Network' -Name 'Disable interrupt moderation (wired)' -Risk Advanced -Rec none -Reboot `
+        -Desc 'The network card reports every packet right away instead of batching them. Can lower ping jitter in games, costs a little CPU.' `
+        -Note 'The adapter briefly reconnects. Turn this back off if downloads get slower.' `
+        -Requires { $Oz.Sys -and -not $Oz.Sys.IsVM -and @(Get-OzNicProps '*InterruptModeration').Count -gt 0 } `
+        -Detect { $p = @(Get-OzNicProps '*InterruptModeration'); ($p.Count -gt 0) -and -not ($p | Where-Object { $_.Value -ne '0' }) } `
+        -Apply {
+        $orig = @{}
+        foreach ($p in @(Get-OzNicProps '*InterruptModeration')) {
+            $orig[$p.Adapter] = $p.Value
+            Set-NetAdapterAdvancedProperty -Name $p.Adapter -RegistryKeyword '*InterruptModeration' -RegistryValue '0' -NoRestart -ErrorAction SilentlyContinue
+        }
+        Set-OzData 'nic-intmod-off' 'Orig' $orig -OnlyIfMissing
+        $Oz.NicPropCache = @{}
+    } -Revert {
+        $orig = Get-OzData 'nic-intmod-off' 'Orig'
+        foreach ($p in @(Get-OzNicProps '*InterruptModeration')) {
+            $v = if ($orig -and $orig.ContainsKey($p.Adapter)) { [string]$orig[$p.Adapter] } else { '1' }
+            Set-NetAdapterAdvancedProperty -Name $p.Adapter -RegistryKeyword '*InterruptModeration' -RegistryValue $v -NoRestart -ErrorAction SilentlyContinue
+        }
+        $Oz.NicPropCache = @{}
+    }
+
+
     # =============================== EXPLORER & UI ===============================
     Add-OzTweak -Id 'classic-context' -Cat 'Explorer' -Name 'Classic right-click menu' -Rec win11 -MinBuild 22000 -Explorer `
         -Desc 'Restores the full Windows 10 context menu - no more "Show more options".' `
@@ -2094,6 +2234,57 @@ function Initialize-OzCatalog {
         -Desc 'Services get 2 s instead of 5 s to stop at shutdown.' `
         -Reg @(@{ P = 'HKLM:\SYSTEM\CurrentControlSet\Control'; N = 'WaitToKillServiceTimeout'; V = '2000'; T = 'String'; D = '5000' })
 
+    Add-OzTweak -Id 'home-nav-off' -Cat 'Explorer' -Name 'Hide Home from Explorer' -Rec none -MinBuild 22621 -Explorer -Desc 'Removes the Home entry at the top of the navigation pane.' `
+        -Reg @(@{ P = 'HKCU:\Software\Classes\CLSID\{f874310e-b6b7-47dc-bc84-b9e6b38f5903}'; N = 'System.IsPinnedToNameSpaceTree'; V = 0 })
+    Add-OzTweak -Id 'dup-drives-off' -Cat 'Explorer' -Name 'No duplicate USB drives in Explorer' -Rec none -Explorer `
+        -Desc 'USB sticks and SD cards show once under This PC instead of twice in the navigation pane.' `
+        -Detect { -not (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\DelegateFolders\{F5FB2C77-0E2F-4A16-A381-3E560C68BC83}') } `
+        -Apply {
+        $had = @()
+        foreach ($k in 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\DelegateFolders\{F5FB2C77-0E2F-4A16-A381-3E560C68BC83}',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\DelegateFolders\{F5FB2C77-0E2F-4A16-A381-3E560C68BC83}') {
+            if (Test-Path -LiteralPath $k) { $had += $k; Remove-Item -LiteralPath $k -Recurse -Force -ErrorAction Stop }
+        }
+        if ($had.Count) { Set-OzData 'dup-drives-off' 'Keys' $had -OnlyIfMissing }
+    } -Revert {
+        $keys = @(Get-OzData 'dup-drives-off' 'Keys' | Where-Object { $_ })
+        if (-not $keys.Count) { $keys = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\Desktop\NameSpace\DelegateFolders\{F5FB2C77-0E2F-4A16-A381-3E560C68BC83}') }
+        foreach ($k in $keys) {
+            if (-not (Test-Path -LiteralPath $k)) { New-Item -Path $k -Force | Out-Null }
+            Set-ItemProperty -LiteralPath $k -Name '(default)' -Value 'Removable Drives'
+        }
+    }
+    Add-OzTweak -Id 'ctx-share-off' -Cat 'Explorer' -Name 'Right-click menu: no Give access, Share or Cast' -Rec none -Explorer `
+        -Desc 'Removes "Give access to", "Share" and "Cast to device" from the right-click menu.' `
+        -Reg @(@{ P = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked'; N = '{f81e9010-6ea4-11ce-a7ff-00aa003ca9f6}'; V = 'Give access to'; T = 'String' },
+            @{ P = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked'; N = '{e2bf9676-5f8f-435c-97eb-11607a5bedf7}'; V = 'Share'; T = 'String' },
+            @{ P = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked'; N = '{7AD84985-87B4-4a16-BE58-8B72A5B390F7}'; V = 'Cast to device'; T = 'String' })
+    Add-OzTweak -Id 'ctx-apps-off' -Cat 'Explorer' -Name 'Right-click menu: no app shortcuts' -Rec none -MinBuild 22000 -Explorer `
+        -Desc 'Removes "Ask Copilot", "Edit with Clipchamp", "Edit with Photos", "Edit with Paint" and "Edit in Notepad". Open with still works.' `
+        -Reg @(@{ P = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked'; N = '{CB3B0003-8088-4EDE-8769-8B354AB2FF8C}'; V = 'Ask Copilot'; T = 'String' },
+            @{ P = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked'; N = '{8AB635F8-9A67-4698-AB99-784AD929F3B4}'; V = 'Edit with Clipchamp'; T = 'String' },
+            @{ P = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked'; N = '{BFE0E2A4-C70C-4AD7-AC3D-10D1ECEBB5B4}'; V = 'Edit with Photos'; T = 'String' },
+            @{ P = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked'; N = '{2430F218-B743-4FD6-97BF-5C76541B4AE9}'; V = 'Edit with Paint'; T = 'String' },
+            @{ P = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Shell Extensions\Blocked'; N = '{CA6CC9F1-867A-481E-951E-A28C5E4F01EA}'; V = 'Edit in Notepad'; T = 'String' })
+    Add-OzTweak -Id 'store-openwith-off' -Cat 'Explorer' -Name 'No "Look for an app in the Store"' -Rec all `
+        -Desc 'Opening an unknown file type shows your installed apps instead of sending you to the Microsoft Store.' `
+        -Reg @(@{ P = "$Pol\Explorer"; N = 'NoUseStoreOpenWith'; V = 1 })
+    Add-OzTweak -Id 'spotlight-icon-off' -Cat 'Explorer' -Name 'Hide the "Learn about this picture" icon' -Rec all -MinBuild 22621 -Explorer `
+        -Desc 'Removes the Windows Spotlight icon from the desktop. Spotlight wallpapers keep changing.' `
+        -Reg @(@{ P = "$CU\Explorer\HideDesktopIcons\NewStartPanel"; N = '{2cc5ca98-6485-489a-920e-b3e88a6ccce3}'; V = 1; D = 0 })
+    Add-OzTweak -Id 'aero-shake-off' -Cat 'Explorer' -Name 'No window shake to minimize' -Rec none -Desc 'Shaking a window by its title bar no longer minimizes every other window.' `
+        -Reg @(@{ P = $Adv; N = 'DisallowShaking'; V = 1 })
+    Add-OzTweak -Id 'compact-view' -Cat 'Explorer' -Name 'Compact Explorer view' -Rec none -MinBuild 22000 -Explorer -Desc 'Less space between files, so more fit on screen (the Windows 10 spacing).' `
+        -Reg @(@{ P = $Adv; N = 'UseCompactMode'; V = 1; D = 0 })
+    Add-OzTweak -Id 'logon-blur-off' -Cat 'Explorer' -Name 'Sharp sign-in screen background' -Rec none -MinBuild 18362 -Desc 'The sign-in screen shows your lock-screen picture without the blur.' `
+        -Reg @(@{ P = "$Pol\System"; N = 'DisableAcrylicBackgroundOnLogon'; V = 1 })
+    Add-OzTweak -Id 'wallpaper-quality' -Cat 'Explorer' -Name 'Full-quality wallpaper' -Rec all `
+        -Desc 'Windows stops recompressing your wallpaper to 85% JPEG quality, so gradients and dark scenes stay smooth.' -Note 'Set your wallpaper again to see the difference.' `
+        -Reg @(@{ P = 'HKCU:\Control Panel\Desktop'; N = 'JPEGImportQuality'; V = 100 })
+    Add-OzTweak -Id 'copy-details' -Cat 'Explorer' -Name 'Detailed file copy window' -Rec all -Desc 'Copy and move windows open with the speed graph and details already shown.' `
+        -Reg @(@{ P = "$CU\Explorer\OperationStatusManager"; N = 'EnthusiastMode'; V = 1 })
+
+
     # =============================== START / TASKBAR / SEARCH ===============================
     Add-OzTweak -Id 'web-search-off' -Cat 'Start' -Name 'No Bing web results in Start search' -Rec all -Explorer `
         -Desc 'Start search only finds your apps, files and settings. Faster and private.' `
@@ -2135,6 +2326,14 @@ function Initialize-OzCatalog {
     Add-OzTweak -Id 'lockscreen-ads-off' -Cat 'Start' -Name 'No lock-screen ads and "fun facts"' -Rec all -Desc 'Keeps your lock screen clean.' `
         -Reg @(@{ P = $CDM; N = 'RotatingLockScreenOverlayEnabled'; V = 0; D = 1 }, @{ P = $CDM; N = 'SubscribedContent-338387Enabled'; V = 0; D = 1 })
 
+    Add-OzTweak -Id 'taskbar-no-combine' -Cat 'Start' -Name 'Never combine taskbar buttons' -Rec none -MinBuild 22631 -Explorer `
+        -Desc 'Every window gets its own taskbar button with its title, on every monitor.' `
+        -Reg @(@{ P = $Adv; N = 'TaskbarGlomLevel'; V = 2; D = 0 }, @{ P = $Adv; N = 'MMTaskbarGlomLevel'; V = 2; D = 0 })
+    Add-OzTweak -Id 'search-history-off' -Cat 'Start' -Name 'No search history on this device' -Rec all `
+        -Desc 'Windows search stops remembering what you searched for on this PC.' `
+        -Reg @(@{ P = "$CU\SearchSettings"; N = 'IsDeviceSearchHistoryEnabled'; V = 0; D = 1 })
+
+
     # =============================== EDGE / ONEDRIVE / STORE ===============================
     Add-OzTweak -Id 'edge-boost-off' -Cat 'Apps' -Name 'Edge: no startup boost / background mode' -Rec all `
         -Desc 'Edge stops pre-loading at sign-in and running after you close it. Frees RAM and CPU.' `
@@ -2173,6 +2372,28 @@ function Initialize-OzCatalog {
     Add-OzTweak -Id 'onedrive-block' -Cat 'Apps' -Name 'Block OneDrive from syncing' -Rec none -Desc 'Prevents OneDrive from running even if it is reinstalled by an update.' `
         -Reg @(@{ P = "$Pol\OneDrive"; N = 'DisableFileSyncNGSC'; V = 1 })
 
+    # =============================== INSTALLED APPS ===============================
+    # Shown only when the app is installed on this PC.
+    Add-OzTweak -Id 'chrome-bg-off' -Cat 'Installed' -Name 'Chrome: no background mode or usage reports' -Rec all `
+        -Desc 'Chrome stops running after you close it, stops its cleanup scanner and stops sending usage statistics.' `
+        -Note 'Chrome will show "managed by your organization" (normal for policies).' `
+        -Requires { Test-OzAppInstalled 'Chrome' } `
+        -Reg @(@{ P = 'HKLM:\SOFTWARE\Policies\Google\Chrome'; N = 'BackgroundModeEnabled'; V = 0 },
+            @{ P = 'HKLM:\SOFTWARE\Policies\Google\Chrome'; N = 'ChromeCleanupEnabled'; V = 0 },
+            @{ P = 'HKLM:\SOFTWARE\Policies\Google\Chrome'; N = 'MetricsReportingEnabled'; V = 0 })
+    Add-OzTweak -Id 'firefox-telemetry-off' -Cat 'Installed' -Name 'Firefox: no telemetry or studies' -Rec all `
+        -Desc 'Firefox stops sending telemetry, stops installing studies and stops its default-browser agent task.' `
+        -Requires { Test-OzAppInstalled 'Firefox' } `
+        -Reg @(@{ P = 'HKLM:\SOFTWARE\Policies\Mozilla\Firefox'; N = 'DisableTelemetry'; V = 1 },
+            @{ P = 'HKLM:\SOFTWARE\Policies\Mozilla\Firefox'; N = 'DisableFirefoxStudies'; V = 1 },
+            @{ P = 'HKLM:\SOFTWARE\Policies\Mozilla\Firefox'; N = 'DisableDefaultBrowserAgent'; V = 1 })
+    Add-OzTweak -Id 'office-telemetry-off' -Cat 'Installed' -Name 'Office: minimum diagnostic data' -Rec all `
+        -Desc 'Word, Excel, Outlook and the other Office apps send no optional diagnostic data.' `
+        -Requires { Test-OzAppInstalled 'Office' } `
+        -Reg @(@{ P = 'HKCU:\Software\Policies\Microsoft\office\common\clienttelemetry'; N = 'SendTelemetry'; V = 3 },
+            @{ P = 'HKCU:\Software\Policies\Microsoft\office\common\clienttelemetry'; N = 'DisableTelemetry'; V = 1 })
+
+
     # =============================== WINDOWS UPDATE ===============================
     Add-OzTweak -Id 'wu-no-autoreboot' -Cat 'Update' -Name 'Never auto-restart while signed in' -Rec all `
         -Desc 'Updates still install, but Windows will not reboot your PC in the middle of a game or render.' `
@@ -2189,6 +2410,17 @@ function Initialize-OzCatalog {
     Add-OzTweak -Id 'wu-no-mrt' -Cat 'Update' -Name 'Skip the monthly Malicious Software Removal Tool' -Rec none `
         -Desc 'Saves a monthly download and scan if you already use Defender or another antivirus.' `
         -Reg @(@{ P = 'HKLM:\SOFTWARE\Policies\Microsoft\MRT'; N = 'DontOfferThroughWUAU'; V = 1 })
+
+    Add-OzTweak -Id 'wu-pin-version' -Cat 'Update' -Name 'Stay on your current Windows version' -Risk Moderate -Rec none `
+        -Desc 'Windows Update keeps sending security fixes for the version you have now, but does not upgrade you to the next yearly version (Pro / Enterprise).' `
+        -Note 'Turn this off before your version stops getting security updates.' `
+        -Requires { [bool]$Oz.PinVersion } `
+        -Reg @(@{ P = $WU; N = 'TargetReleaseVersion'; V = 1 }, @{ P = $WU; N = 'ProductVersion'; V = $pinProduct; T = 'String' },
+            @{ P = $WU; N = 'TargetReleaseVersionInfo'; V = $Oz.PinVersion; T = 'String' })
+    Add-OzTweak -Id 'wu-defer-quality' -Cat 'Update' -Name 'Delay monthly updates 7 days' -Risk Moderate -Rec none `
+        -Desc 'Monthly fixes arrive a week later, after early problems are found and pulled (Pro / Enterprise).' `
+        -Reg @(@{ P = $WU; N = 'DeferQualityUpdates'; V = 1 }, @{ P = $WU; N = 'DeferQualityUpdatesPeriodInDays'; V = 7 })
+
 
     # =============================== STORAGE & NTFS ===============================
     Add-OzTweak -Id 'ntfs-lastaccess-off' -Cat 'Storage' -Name 'Disable NTFS last-access timestamps' -Rec all `
@@ -2212,6 +2444,15 @@ function Initialize-OzCatalog {
     Add-OzTweak -Id 'storage-sense-on' -Cat 'Storage' -Name 'Storage Sense ON' -Rec lowend `
         -Desc 'Windows cleans temp files and the recycle bin automatically when space runs low.' `
         -Reg @(@{ P = "$CU\StorageSense\Parameters\StoragePolicy"; N = '01'; V = 1; D = 0 })
+
+    Add-OzTweak -Id 'reserved-storage-off' -Cat 'Storage' -Name 'Free the space Windows reserves for updates' -Risk Moderate -Rec lowend `
+        -Desc 'Gives back the 5-7 GB that Windows keeps aside for updates. Worth it on 64-128 GB drives.' `
+        -Note 'Updates then need that much free space while they install. Windows cannot change this while an update is waiting.' `
+        -Requires { [bool](Get-Command Get-WindowsReservedStorageState -ErrorAction SilentlyContinue) } `
+        -Detect { [string](Get-WindowsReservedStorageState -ErrorAction Stop).ReservedStorageState -eq 'Disabled' } `
+        -Apply { Set-WindowsReservedStorageState -State Disabled -ErrorAction Stop | Out-Null } `
+        -Revert { Set-WindowsReservedStorageState -State Enabled -ErrorAction Stop | Out-Null }
+
 
     # =============================== SECURITY HARDENING ===============================
     Add-OzTweak -Id 'smb1-off' -Cat 'Security' -Name 'Disable SMBv1' -Rec all `
@@ -2247,6 +2488,27 @@ function Initialize-OzCatalog {
     Add-OzTweak -Id 'sec-notifs-reduce' -Cat 'Security' -Name 'Fewer non-critical security notifications' -Risk Moderate -Rec none `
         -Desc 'Hides "summary" and informational Windows Security toasts. Threat alerts still show.' `
         -Reg @(@{ P = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender Security Center\Notifications'; N = 'DisableEnhancedNotifications'; V = 1 })
+
+    Add-OzTweak -Id 'pua-block-on' -Cat 'Security' -Name 'Block potentially unwanted apps' -Rec all `
+        -Desc 'Defender blocks adware, bundled toolbars, browser hijackers and hidden crypto miners.' -Note 'Only works while Microsoft Defender is your antivirus.' `
+        -Reg @(@{ P = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender'; N = 'PUAProtection'; V = 1 })
+    Add-OzTweak -Id 'wpad-off' -Cat 'Security' -Name 'Disable proxy auto-discovery (WPAD)' -Rec all `
+        -Desc 'Stops Windows from asking the network for a proxy, a trick used to intercept traffic on public Wi-Fi.' -Note 'Company networks that hand out their proxy automatically need this on.' `
+        -Reg @(@{ P = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp'; N = 'DisableWpad'; V = 1 })
+    Add-OzTweak -Id 'autoplay-off' -Cat 'Security' -Name 'Disable AutoPlay' -Rec all `
+        -Desc 'Plugging in a USB drive, phone or disc no longer pops up an action or opens an app by itself.' `
+        -Reg @(@{ P = "$CU\Explorer\AutoplayHandlers"; N = 'DisableAutoplay'; V = 1; D = 0 })
+    Add-OzTweak -Id 'lsa-protect-on' -Cat 'Security' -Name 'LSA protection ON' -Risk Moderate -Rec none -MinBuild 22621 -Reboot `
+        -Desc 'Runs the Windows sign-in process as protected, so password-stealing tools cannot read its memory. Can be turned off again.' `
+        -Note 'Some old smart-card readers or password plug-ins may stop loading.' `
+        -Reg @(@{ P = 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa'; N = 'RunAsPPL'; V = 2 })
+    Add-OzTweak -Id 'rdp-off' -Cat 'Security' -Name 'Block Remote Desktop connections' -Rec all `
+        -Desc 'Makes sure nobody can sign in to this PC with Remote Desktop. Quick Assist and remote tools you start yourself still work.' `
+        -Reg @(@{ P = 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server'; N = 'fDenyTSConnections'; V = 1; D = 1 })
+    Add-OzTweak -Id 'wsh-off' -Cat 'Security' -Name 'Disable Windows Script Host' -Risk Moderate -Rec none `
+        -Desc 'Blocks .vbs and .js script files, a common way malware arrives in e-mail attachments and downloads.' -Note 'Some old installers and login scripts use these files.' `
+        -Reg @(@{ P = 'HKLM:\SOFTWARE\Microsoft\Windows Script Host\Settings'; N = 'Enabled'; V = 0 })
+
 
     # =============================== DANGER ZONE ===============================
     Add-OzTweak -Id 'defender-rt-off' -Cat 'Danger' -Name 'Turn off Defender real-time protection' -Rec none -Reboot `
@@ -2322,6 +2584,7 @@ function Initialize-OzProfiles {
                     'store-autoupdate-off', 'storage-sense-on', 'ntfs-lastaccess-off', 'do-p2p-off', 'priority-sep')
                 if ($Oz.Sys.Storage.SystemKind -eq 'HDD') { $ids += 'search-index-off' } else { $ids += 'startup-delay-off' }
                 if ($Oz.Sys.Memory.GB -lt 8) { $ids += 'svc-diag' }
+                if ($Oz.Sys.Storage.SizeGB -gt 0 -and $Oz.Sys.Storage.SizeGB -le 128) { $ids += 'reserved-storage-off' }
                 $ids + @(Get-OzPlanFor 'perf')
             }
         }
@@ -2341,7 +2604,8 @@ function Initialize-OzProfiles {
             Desc = 'Turbo-off cool plan on laptops (smart plan on desktops), fewer background processes and no surprise downloads. Lower temps, quieter fans, longer battery.'
             Resolve = {
                 $Oz.Core + @('background-apps-off', 'edge-boost-off', 'gamedvr-off', 'svc-maps', 'svc-retaildemo', 'widgets-off',
-                    'search-highlights-off', 'start-suggest-off', 'tips-off', 'store-autoupdate-off', 'do-p2p-off', 'ntfs-lastaccess-off') + @(Get-OzPlanFor 'cool')
+                    'search-highlights-off', 'start-suggest-off', 'tips-off', 'store-autoupdate-off', 'do-p2p-off', 'ntfs-lastaccess-off',
+                    'standby-net-off') + @(Get-OzPlanFor 'cool')
             }
         }
         [pscustomobject]@{
@@ -2351,7 +2615,8 @@ function Initialize-OzProfiles {
             Resolve = {
                 $Oz.Core + @('priority-sep', 'fth-off', 'mmcss-games', 'game-mode-on', 'gamedvr-off', 'gamebar-tips-off', 'hags-on',
                     'power-throttle-off', 'net-throttle-off', 'nagle-off', 'nic-power-off', 'eee-off', 'mouse-accel-off', 'sticky-keys-off',
-                    'windowed-opt-on', 'notif-suggest-off', 'background-apps-off', 'edge-boost-off', 'widgets-off', 'wu-no-autoreboot', 'do-p2p-off') + @(Get-OzPlanFor 'max')
+                    'windowed-opt-on', 'notif-suggest-off', 'background-apps-off', 'edge-boost-off', 'widgets-off', 'wu-no-autoreboot', 'do-p2p-off',
+                    'kb-repeat-fast', 'gamebar-button-off') + @(Get-OzPlanFor 'max')
             }
         }
         [pscustomobject]@{
@@ -2359,16 +2624,20 @@ function Initialize-OzProfiles {
             Sub = 'Minimum data leaves this PC'
             Desc = 'All privacy, telemetry and AI switches, no cloud search, app permissions locked down, no sync, no ads anywhere. Camera and microphone are left for you to decide.'
             Resolve = {
-                @($Oz.Tweaks | Where-Object { $_.Cat -in 'Privacy', 'AI' } | ForEach-Object Id) +
+                @($Oz.Tweaks | Where-Object { $_.Cat -in 'Privacy', 'AI', 'Installed' } | ForEach-Object Id) +
                 @('web-search-off', 'cortana-off', 'cloud-search-off', 'search-highlights-off', 'edge-telemetry-off', 'edge-nags-off',
-                    'do-p2p-off', 'llmnr-off', 'lockscreen-ads-off', 'start-suggest-off', 'tips-off', 'no-recent-files', 'svc-geo')
+                    'do-p2p-off', 'llmnr-off', 'lockscreen-ads-off', 'start-suggest-off', 'tips-off', 'no-recent-files', 'svc-geo',
+                    'search-history-off', 'wpad-off')
             }
         }
         [pscustomobject]@{
             Key = 'clean'; Name = 'CLEAN WINDOWS UI'; Icon = [char]0xE771; Color = '#4FD8FF'; Featured = $false
             Sub = 'Declutter Start, taskbar and Explorer'
-            Desc = 'Classic right-click menu, no widgets or chat icon, clean Start, no tips or ads, End Task on the taskbar, file extensions visible.'
-            Resolve = { $Oz.Clean + @('classic-context', 'end-task', 'alt-tab-windows', 'shortcut-suffix-off', 'copilot-off', 'edge-nags-off') }
+            Desc = 'Classic right-click menu without app shortcuts, no widgets or chat icon, clean Start, no tips or ads, End Task on the taskbar, file extensions visible.'
+            Resolve = {
+                $Oz.Clean + @('classic-context', 'end-task', 'alt-tab-windows', 'shortcut-suffix-off', 'copilot-off', 'edge-nags-off',
+                    'ctx-apps-off', 'store-openwith-off', 'spotlight-icon-off', 'copy-details')
+            }
         }
     )
 }
@@ -3023,6 +3292,2207 @@ function Invoke-OzRevertAll {
     }
     Save-OzJournal
     Invoke-OzChangeSet -ToRevert $tweaks
+}
+#endregion
+
+#region ============================ THEMES (RAINMETER) - SKIN FILES ============================
+# Rainmeter skins written by the THEMES page into Documents\Rainmeter\Skins\OZZYHN.
+# In these templates {{84}} is a size in pixels at 100% scale: it is replaced by 84 x the scale the
+# user picked, so every skin is sharp at any size. #Name# values are Rainmeter variables, filled from
+# @Resources\Settings.inc, which the app writes. Everything stays plain ASCII; text that can hold
+# accents (Spanish words, file names) lives in the .inc files, which are written as UTF-16.
+$Oz.ThemeTpl = @{}
+
+$Oz.ThemeTpl['@Resources\Clock.inc'] = @'
+; Shared by every OZZYHN clock style: time, greeting and wallpaper-aware text color.
+[Variables]
+Ink=245,245,245
+G1=
+G2=
+
+[mDay]
+Measure=Time
+Format=%A
+FormatLocale=#Locale#
+
+[mDayShort]
+Measure=Time
+Format=%a
+FormatLocale=#Locale#
+RegExpSubstitute=1
+Substitute="\.":""
+
+[mDate]
+Measure=Time
+Format=#DateFmt#
+FormatLocale=#Locale#
+RegExpSubstitute=1
+Substitute="\.":""
+
+[mTime]
+Measure=Time
+Format=#TimeFmt#
+FormatLocale=#Locale#
+
+[mHM]
+Measure=Time
+Format=#TimeShort#
+
+[mAmPm]
+Measure=Time
+Format=%p
+FormatLocale=#Locale#
+
+[mHH]
+Measure=Time
+Format=#HourFmt#
+
+[mMM]
+Measure=Time
+Format=%M
+
+[mSec]
+Measure=Time
+Format=%S
+
+[mSecNum]
+Measure=Calc
+Formula=[mSec]
+DynamicVariables=1
+
+[mHourText]
+Measure=Time
+Format=%H
+
+[mHour]
+Measure=Calc
+Formula=[mHourText]
+DynamicVariables=1
+IfCondition=(mHour >= 5) && (mHour < 12)
+IfTrueAction=[!SetVariable G1 "#S_G1Morning#"][!SetVariable G2 "#S_G2Morning#"][!UpdateMeterGroup Ink][!Redraw]
+IfCondition2=(mHour >= 12) && (mHour < 18)
+IfTrueAction2=[!SetVariable G1 "#S_G1Afternoon#"][!SetVariable G2 "#S_G2Afternoon#"][!UpdateMeterGroup Ink][!Redraw]
+IfCondition3=(mHour >= 18) && (mHour < 22)
+IfTrueAction3=[!SetVariable G1 "#S_G1Evening#"][!SetVariable G2 "#S_G2Evening#"][!UpdateMeterGroup Ink][!Redraw]
+IfCondition4=(mHour >= 22) || (mHour < 5)
+IfTrueAction4=[!SetVariable G1 "#S_G1Night#"][!SetVariable G2 "#S_G2Night#"][!UpdateMeterGroup Ink][!Redraw]
+
+; Reads the brightness of the middle of the wallpaper (a hidden PowerShell, a fraction of a second)
+; and answers which text color fits: 0 dark, 1 mid, 2 light.
+[mLuma]
+Measure=Plugin
+Plugin=RunCommand
+Parameter=powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "#@#Scripts\Luma.ps1" -Region #InkRegion# -Mode #InkMode# -Dark #InkDarkTh# -Light #InkLightTh# -Lums "#InkLums#" -Cx #InkCx# -Cy #InkCy#
+State=Hide
+OutputType=ANSI
+Timeout=20000
+RegExpSubstitute=1
+Substitute="(?s)^\D*([012]).*$":"\1","(?s)^\D*$":"#InkSlot#"
+DynamicVariables=1
+FinishAction=[!SetVariable InkSlot "[mLuma]"][!WriteKeyValue Variables InkSlot "[mLuma]" "#@#State.inc"][!UpdateMeasure mInk][!UpdateMeterGroup Ink][!Redraw]
+
+; A new wallpaper picked in Settings changes this value
+[mWallReg]
+Measure=Registry
+RegHKey=HKEY_CURRENT_USER
+RegKey=Control Panel\Desktop
+RegValue=WallPaper
+UpdateDivider=2
+Disabled=#NoAutoInk#
+OnChangeAction=[!CommandMeasure mLuma "Run"]
+
+; Every 10 minutes, for slideshows and Spotlight
+[mInkTick]
+Measure=Calc
+Formula=Counter % 600
+Disabled=#NoAutoInk#
+IfCondition=mInkTick = 599
+IfTrueAction=[!CommandMeasure mLuma "Run"]
+
+[mInk]
+Measure=Calc
+Formula=(#AutoInk# = 1 ? #InkSlot# : #InkFixed#)
+DynamicVariables=1
+IfCondition=mInk = 0
+IfTrueAction=[!SetVariable Ink "#InkDark#"][!UpdateMeterGroup Ink][!Redraw]
+IfCondition2=mInk = 1
+IfTrueAction2=[!SetVariable Ink "#InkMid#"][!UpdateMeterGroup Ink][!Redraw]
+IfCondition3=mInk = 2
+IfTrueAction3=[!SetVariable Ink "#InkLight#"][!UpdateMeterGroup Ink][!Redraw]
+
+[sInk]
+FontColor=#Ink#
+FontFace=#FontDisplay#
+AntiAlias=1
+DynamicVariables=1
+Group=Ink
+StringAlign=#Align#
+X=#AX#
+'@
+
+$Oz.ThemeTpl['Clock\Horizon.ini'] = @'
+; OZZYHN clock - HORIZON: the day spelled wide, date and time underneath
+[Rainmeter]
+Update=1000
+AccurateText=1
+Group=OzAll | OzClock
+OnRefreshAction=[!SetWindowPosition "#PosX#" "#PosY#" "#AnchorX#" "#AnchorY#"][!ZPos -2][!Draggable 0][!CommandMeasure mLuma "Run"]
+ContextTitle=#S_RefreshColors#
+ContextAction=[!CommandMeasure mLuma "Run"]
+ContextTitle2=#S_NextStyle#
+ContextAction2=[!ActivateConfig "#CURRENTCONFIG#" "Blade.ini"]
+ContextTitle3=#S_Wallpapers#
+ContextAction3=[!ToggleConfig "OZZYHN\Walls" "Walls.ini"]
+
+[Metadata]
+Name=OZZYHN Clock - Horizon
+Author=OZZYHN TWEAKS
+Information=Made by Optimizaciones de Ozzyhn. Change it from the app's THEMES page.
+Version=1.0
+License=MIT
+
+[Variables]
+@Include=#@#Settings.inc
+@Include2=#@#Strings.inc
+@Include3=#@#State.inc
+@Include4=#@#Clock.inc
+W={{900}}
+H={{230}}
+Pad={{4}}
+AX=(#Pad#+(#W#-2*#Pad#)*#AlignK#)
+
+[mBox]
+Meter=Image
+W=#W#
+H=#H#
+SolidColor=0,0,0,0
+
+[tDay]
+Meter=String
+MeterStyle=sInk
+MeasureName=mDay
+Y={{0}}
+FontSize={{80}}
+FontWeight=300
+StringCase=Upper
+InlineSetting=CharacterSpacing | {{16}} | 0
+
+[tDate]
+Meter=String
+MeterStyle=sInk
+MeasureName=mDate
+Y={{2}}R
+FontSize={{16}}
+FontWeight=400
+StringCase=Upper
+InlineSetting=CharacterSpacing | {{6}} | 0
+
+[tTime]
+Meter=String
+MeterStyle=sInk
+MeasureName=mTime
+Text=-  %1  -
+Y={{8}}R
+FontSize={{16}}
+FontWeight=400
+StringCase=Upper
+InlineSetting=CharacterSpacing | {{5}} | 0
+'@
+
+$Oz.ThemeTpl['Clock\Blade.ini'] = @'
+; OZZYHN clock - BLADE: a greeting and the short day between two lines
+[Rainmeter]
+Update=1000
+AccurateText=1
+Group=OzAll | OzClock
+OnRefreshAction=[!SetWindowPosition "#PosX#" "#PosY#" "#AnchorX#" "#AnchorY#"][!ZPos -2][!Draggable 0][!CommandMeasure mLuma "Run"]
+ContextTitle=#S_RefreshColors#
+ContextAction=[!CommandMeasure mLuma "Run"]
+ContextTitle2=#S_NextStyle#
+ContextAction2=[!ActivateConfig "#CURRENTCONFIG#" "Stack.ini"]
+ContextTitle3=#S_Wallpapers#
+ContextAction3=[!ToggleConfig "OZZYHN\Walls" "Walls.ini"]
+
+[Metadata]
+Name=OZZYHN Clock - Blade
+Author=OZZYHN TWEAKS
+Information=Made by Optimizaciones de Ozzyhn. Change it from the app's THEMES page.
+Version=1.0
+License=MIT
+
+[Variables]
+@Include=#@#Settings.inc
+@Include2=#@#Strings.inc
+@Include3=#@#State.inc
+@Include4=#@#Clock.inc
+W={{380}}
+H={{500}}
+Pad={{6}}
+AX=(#Pad#+(#W#-2*#Pad#)*#AlignK#)
+
+[mBox]
+Meter=Image
+W=#W#
+H=#H#
+SolidColor=0,0,0,0
+
+[lTop]
+Meter=Shape
+Shape=Line #AX#,0,#AX#,{{78}} | StrokeWidth {{2}} | Stroke Color #Ink#,210
+DynamicVariables=1
+Group=Ink
+Y={{4}}
+
+[tG1]
+Meter=String
+MeterStyle=sInk
+Text=#G1#
+Y={{110}}
+FontSize={{12}}
+FontWeight=700
+InlineSetting=CharacterSpacing | {{4}} | 0
+
+[tG2]
+Meter=String
+MeterStyle=sInk
+Text=#G2#
+Y={{6}}R
+FontSize={{12}}
+FontWeight=700
+InlineSetting=CharacterSpacing | {{4}} | 0
+
+[tDay]
+Meter=String
+MeterStyle=sInk
+MeasureName=mDayShort
+Y={{2}}R
+FontSize={{74}}
+FontWeight=600
+StringCase=Upper
+InlineSetting=CharacterSpacing | {{6}} | 0
+
+[tDate]
+Meter=String
+MeterStyle=sInk
+MeasureName=mDate
+Y={{0}}R
+FontSize={{12}}
+FontWeight=700
+StringCase=Upper
+InlineSetting=CharacterSpacing | {{3}} | 0
+
+[tTime]
+Meter=String
+MeterStyle=sInk
+MeasureName=mTime
+Y={{6}}R
+FontSize={{12}}
+FontWeight=700
+StringCase=Upper
+InlineSetting=CharacterSpacing | {{3}} | 0
+
+[lBottom]
+Meter=Shape
+Shape=Line #AX#,0,#AX#,{{78}} | StrokeWidth {{2}} | Stroke Color #Ink#,210
+DynamicVariables=1
+Group=Ink
+X=0
+Y={{28}}R
+'@
+
+$Oz.ThemeTpl['Clock\Stack.ini'] = @'
+; OZZYHN clock - STACK: hours over minutes, day and date below
+[Rainmeter]
+Update=1000
+AccurateText=1
+Group=OzAll | OzClock
+OnRefreshAction=[!SetWindowPosition "#PosX#" "#PosY#" "#AnchorX#" "#AnchorY#"][!ZPos -2][!Draggable 0][!CommandMeasure mLuma "Run"]
+ContextTitle=#S_RefreshColors#
+ContextAction=[!CommandMeasure mLuma "Run"]
+ContextTitle2=#S_NextStyle#
+ContextAction2=[!ActivateConfig "#CURRENTCONFIG#" "Pulse.ini"]
+ContextTitle3=#S_Wallpapers#
+ContextAction3=[!ToggleConfig "OZZYHN\Walls" "Walls.ini"]
+
+[Metadata]
+Name=OZZYHN Clock - Stack
+Author=OZZYHN TWEAKS
+Information=Made by Optimizaciones de Ozzyhn. Change it from the app's THEMES page.
+Version=1.0
+License=MIT
+
+[Variables]
+@Include=#@#Settings.inc
+@Include2=#@#Strings.inc
+@Include3=#@#State.inc
+@Include4=#@#Clock.inc
+W={{520}}
+H={{400}}
+Pad={{4}}
+AX=(#Pad#+(#W#-2*#Pad#)*#AlignK#)
+
+[mBox]
+Meter=Image
+W=#W#
+H=#H#
+SolidColor=0,0,0,0
+
+[tHH]
+Meter=String
+MeterStyle=sInk
+MeasureName=mHH
+Y={{-14}}
+FontSize={{120}}
+FontWeight=300
+
+[tMM]
+Meter=String
+MeterStyle=sInk
+MeasureName=mMM
+FontColor=#Ink#,150
+Y={{-62}}R
+FontSize={{120}}
+FontWeight=300
+
+[tInfo]
+Meter=String
+MeterStyle=sInk
+MeasureName=mDay
+MeasureName2=mDate
+Text=%1  [\x00B7]  %2
+Y={{-14}}R
+FontSize={{13}}
+FontWeight=600
+StringCase=Upper
+InlineSetting=CharacterSpacing | {{5}} | 0
+'@
+
+$Oz.ThemeTpl['Clock\Pulse.ini'] = @'
+; OZZYHN clock - PULSE: neon time with a seconds line (uses the theme accent colors)
+[Rainmeter]
+Update=1000
+AccurateText=1
+Group=OzAll | OzClock
+OnRefreshAction=[!SetWindowPosition "#PosX#" "#PosY#" "#AnchorX#" "#AnchorY#"][!ZPos -2][!Draggable 0][!CommandMeasure mLuma "Run"]
+ContextTitle=#S_RefreshColors#
+ContextAction=[!CommandMeasure mLuma "Run"]
+ContextTitle2=#S_NextStyle#
+ContextAction2=[!ActivateConfig "#CURRENTCONFIG#" "Minimal.ini"]
+ContextTitle3=#S_Wallpapers#
+ContextAction3=[!ToggleConfig "OZZYHN\Walls" "Walls.ini"]
+
+[Metadata]
+Name=OZZYHN Clock - Pulse
+Author=OZZYHN TWEAKS
+Information=Made by Optimizaciones de Ozzyhn. Change it from the app's THEMES page.
+Version=1.0
+License=MIT
+
+[Variables]
+@Include=#@#Settings.inc
+@Include2=#@#Strings.inc
+@Include3=#@#State.inc
+@Include4=#@#Clock.inc
+W={{760}}
+H={{230}}
+Pad={{6}}
+AX=(#Pad#+(#W#-2*#Pad#)*#AlignK#)
+
+[mBox]
+Meter=Image
+W=#W#
+H=#H#
+SolidColor=0,0,0,0
+
+[tTime]
+Meter=String
+MeasureName=mHM
+X=#AX#
+Y={{-10}}
+StringAlign=#Align#
+FontFace=#FontDisplay#
+FontSize={{92}}
+FontWeight=600
+FontColor=255,255,255
+AntiAlias=1
+StringCase=Upper
+InlineSetting=GradientColor | 180 | #Accent#,255 ; 0.0 | #Accent2#,255 ; 1.0
+InlineSetting2=Shadow | 0 | 0 | {{14}} | #Accent#,110
+
+[lTrack]
+Meter=Shape
+Shape=Rectangle #Pad#,0,(#W#-2*#Pad#),{{3}},{{1.5}} | Fill Color #Ink#,45 | StrokeWidth 0
+DynamicVariables=1
+Group=Ink
+X=0
+Y=([tTime:Y]+[tTime:H]+{{2}})
+
+[lSeconds]
+Meter=Shape
+Shape=Rectangle #Pad#,0,(Max((#W#-2*#Pad#)*[mSecNum]/59,{{3}})),{{3}},{{1.5}} | Fill LinearGradient gPulse | StrokeWidth 0
+gPulse=0 | #Accent#,255 ; 0.0 | #Accent2#,255 ; 1.0
+DynamicVariables=1
+X=0
+Y=([tTime:Y]+[tTime:H]+{{2}})
+
+[tInfo]
+Meter=String
+MeterStyle=sInk
+MeasureName=mDay
+MeasureName2=mDate
+MeasureName3=mAmPm
+Text=#PulseInfo#
+Y=([tTime:Y]+[tTime:H]+{{18}})
+FontSize={{14}}
+FontWeight=600
+StringCase=Upper
+InlineSetting=CharacterSpacing | {{5}} | 0
+'@
+
+$Oz.ThemeTpl['Clock\Minimal.ini'] = @'
+; OZZYHN clock - MINIMAL: one quiet line
+[Rainmeter]
+Update=1000
+AccurateText=1
+Group=OzAll | OzClock
+OnRefreshAction=[!SetWindowPosition "#PosX#" "#PosY#" "#AnchorX#" "#AnchorY#"][!ZPos -2][!Draggable 0][!CommandMeasure mLuma "Run"]
+ContextTitle=#S_RefreshColors#
+ContextAction=[!CommandMeasure mLuma "Run"]
+ContextTitle2=#S_NextStyle#
+ContextAction2=[!ActivateConfig "#CURRENTCONFIG#" "Horizon.ini"]
+ContextTitle3=#S_Wallpapers#
+ContextAction3=[!ToggleConfig "OZZYHN\Walls" "Walls.ini"]
+
+[Metadata]
+Name=OZZYHN Clock - Minimal
+Author=OZZYHN TWEAKS
+Information=Made by Optimizaciones de Ozzyhn. Change it from the app's THEMES page.
+Version=1.0
+License=MIT
+
+[Variables]
+@Include=#@#Settings.inc
+@Include2=#@#Strings.inc
+@Include3=#@#State.inc
+@Include4=#@#Clock.inc
+W={{760}}
+H={{40}}
+Pad={{4}}
+AX=(#Pad#+(#W#-2*#Pad#)*#AlignK#)
+
+[mBox]
+Meter=Image
+W=#W#
+H=#H#
+SolidColor=0,0,0,0
+
+[tLine]
+Meter=String
+MeterStyle=sInk
+MeasureName=mDay
+MeasureName2=mDate
+MeasureName3=mTime
+Text=%1   [\x00B7]   %2   [\x00B7]   %3
+Y={{6}}
+FontSize={{15}}
+FontWeight=600
+StringCase=Upper
+InlineSetting=CharacterSpacing | {{4}} | 0
+'@
+
+$Oz.ThemeTpl['Bar\Bar.ini'] = @'
+; OZZYHN status bar: wallpapers button, date and time, CPU, RAM, network, volume, battery, settings
+[Rainmeter]
+Update=1000
+AccurateText=1
+Group=OzAll
+OnRefreshAction=[!SetWindowPosition "50%" "#BarY#" "50%" "0%"][!ZPos #BarZ#][!Draggable 0][!KeepOnScreen 1]
+ContextTitle=#S_Wallpapers#
+ContextAction=[!ToggleConfig "OZZYHN\Walls" "Walls.ini"]
+
+[Metadata]
+Name=OZZYHN Status bar
+Author=OZZYHN TWEAKS
+Information=Made by Optimizaciones de Ozzyhn. Change it from the app's THEMES page.
+Version=1.0
+License=MIT
+
+[Variables]
+@Include=#@#Settings.inc
+@Include2=#@#Strings.inc
+BW=(#SCREENAREAWIDTH#-2*#BarX#)
+PH={{28}}
+PR={{14}}
+Gap={{6}}
+WLeft={{96}}
+WMid={{230}}
+WCpu={{86}}
+WRam={{112}}
+WNet={{128}}
+WVol={{70}}
+WBat={{74}}
+WSet={{34}}
+XSet=(#BW#-#WSet#)
+XBat=(#XSet#-(#Gap#+#WBat#)*#HasBattery#)
+XVol=(#XBat#-#Gap#-#WVol#)
+XNet=(#XVol#-#Gap#-#WNet#)
+XRam=(#XNet#-#Gap#-#WRam#)
+XCpu=(#XRam#-#Gap#-#WCpu#)
+XMid=((#BW#-#WMid#)/2)
+TY=(#PH#/2)
+ActWalls=[!ToggleConfig "OZZYHN\Walls" "Walls.ini"]
+ActSettings=["ms-settings:"]
+ActTaskMgr=["taskmgr.exe"]
+ActVolMute=[!CommandMeasure mVol "ToggleMute"]
+ActVolUp=[!CommandMeasure mVol "ChangeVolume 2"]
+ActVolDown=[!CommandMeasure mVol "ChangeVolume -2"]
+
+; ---------------- measures ----------------
+[mClock]
+Measure=Time
+Format=#BarTimeFmt#
+FormatLocale=#Locale#
+RegExpSubstitute=1
+Substitute="\.":""
+
+[mCpu]
+Measure=CPU
+
+[mRamUsed]
+Measure=PhysicalMemory
+UpdateDivider=2
+
+[mRamGB]
+Measure=Calc
+Formula=mRamUsed / 1073741824
+UpdateDivider=2
+
+[mNetIn]
+Measure=NetIn
+
+[mVol]
+Measure=Plugin
+Plugin=Win7AudioPlugin
+
+; Volume as a number only (-1 = muted or no sound device)
+[mVolNum]
+Measure=Calc
+Formula=mVol
+IfCondition=mVolNum < 0
+IfTrueAction=[!SetOption tVolIcon Text "[\xE74F]"][!SetOption tVol Text "#S_Mute#"][!UpdateMeter tVolIcon][!UpdateMeter tVol]
+IfFalseAction=[!SetOption tVolIcon Text "[\xE767]"][!SetOption tVol Text "%1%"][!UpdateMeter tVolIcon][!UpdateMeter tVol]
+
+[mBat]
+Measure=Plugin
+Plugin=PowerPlugin
+PowerState=Percent
+Disabled=#NoBattery#
+
+; ---------------- pill style ----------------
+[sPillText]
+FontFace=#FontBody#
+FontSize={{9.5}}
+FontWeight=600
+FontColor=#TextMain#
+AntiAlias=1
+StringAlign=CenterCenter
+Y=#TY#
+[sPillLabel]
+FontFace=#FontBody#
+FontSize={{8}}
+FontWeight=700
+FontColor=#TextSub#
+AntiAlias=1
+StringAlign=LeftCenter
+Y=#TY#
+InlineSetting=CharacterSpacing | {{1.5}} | 0
+[sPillIcon]
+FontFace=#FontIcons#
+FontSize={{10}}
+FontColor=#TextSub#
+AntiAlias=1
+StringAlign=LeftCenter
+Y=#TY#
+
+; ---------------- size of the bar ----------------
+[mBox]
+Meter=Image
+W=#BW#
+H=#PH#
+SolidColor=0,0,0,0
+
+; ---------------- left: wallpapers ----------------
+[pLeft]
+Meter=Shape
+Shape=Rectangle 0.5,0.5,(#WLeft#-1),(#PH#-1),#PR# | Fill Color #PillBg# | Stroke Color #PillLine# | StrokeWidth 1
+LeftMouseUpAction=#ActWalls#
+ToolTipText=#S_Wallpapers#
+MouseActionCursor=1
+X=0
+[tLeftMark]
+Meter=String
+Text=OZ
+FontFace=#FontDisplay#
+FontSize={{11}}
+FontWeight=700
+FontColor=#Accent#
+AntiAlias=1
+StringAlign=LeftCenter
+X={{14}}
+Y=#TY#
+LeftMouseUpAction=#ActWalls#
+[tLeftIcon]
+Meter=String
+MeterStyle=sPillIcon
+Text=[\xE8B9]
+FontColor=#TextMain#
+X={{8}}R
+LeftMouseUpAction=#ActWalls#
+
+; ---------------- middle: date and time ----------------
+[pMid]
+Meter=Shape
+Shape=Rectangle 0.5,0.5,(#WMid#-1),(#PH#-1),#PR# | Fill Color #PillBg# | Stroke Color #PillLine# | StrokeWidth 1
+X=#XMid#
+Y=0
+[tMid]
+Meter=String
+MeterStyle=sPillText
+MeasureName=mClock
+X=(#XMid#+#WMid#/2)
+StringCase=Upper
+InlineSetting=CharacterSpacing | {{1}} | 0
+
+; ---------------- right ----------------
+[pCpu]
+Meter=Shape
+Shape=Rectangle 0.5,0.5,(#WCpu#-1),(#PH#-1),#PR# | Fill Color #PillBg# | Stroke Color #PillLine# | StrokeWidth 1
+X=#XCpu#
+Y=0
+LeftMouseUpAction=#ActTaskMgr#
+MouseActionCursor=1
+[tCpuL]
+Meter=String
+MeterStyle=sPillLabel
+Text=CPU
+X=(#XCpu#+{{12}})
+LeftMouseUpAction=#ActTaskMgr#
+[tCpu]
+Meter=String
+MeterStyle=sPillText
+MeasureName=mCpu
+Text=%1%
+NumOfDecimals=0
+StringAlign=RightCenter
+X=(#XCpu#+#WCpu#-{{12}})
+LeftMouseUpAction=#ActTaskMgr#
+
+[pRam]
+Meter=Shape
+Shape=Rectangle 0.5,0.5,(#WRam#-1),(#PH#-1),#PR# | Fill Color #PillBg# | Stroke Color #PillLine# | StrokeWidth 1
+X=#XRam#
+Y=0
+LeftMouseUpAction=#ActTaskMgr#
+MouseActionCursor=1
+[tRamL]
+Meter=String
+MeterStyle=sPillLabel
+Text=RAM
+X=(#XRam#+{{12}})
+LeftMouseUpAction=#ActTaskMgr#
+[tRam]
+Meter=String
+MeterStyle=sPillText
+MeasureName=mRamGB
+Text=%1 GB
+NumOfDecimals=1
+StringAlign=RightCenter
+X=(#XRam#+#WRam#-{{12}})
+LeftMouseUpAction=#ActTaskMgr#
+
+[pNet]
+Meter=Shape
+Shape=Rectangle 0.5,0.5,(#WNet#-1),(#PH#-1),#PR# | Fill Color #PillBg# | Stroke Color #PillLine# | StrokeWidth 1
+X=#XNet#
+Y=0
+[tNetIcon]
+Meter=String
+MeterStyle=sPillIcon
+Text=[\xE896]
+X=(#XNet#+{{11}})
+[tNet]
+Meter=String
+MeterStyle=sPillText
+MeasureName=mNetIn
+Text=%1B/s
+AutoScale=1
+NumOfDecimals=1
+StringAlign=RightCenter
+X=(#XNet#+#WNet#-{{12}})
+
+[pVol]
+Meter=Shape
+Shape=Rectangle 0.5,0.5,(#WVol#-1),(#PH#-1),#PR# | Fill Color #PillBg# | Stroke Color #PillLine# | StrokeWidth 1
+X=#XVol#
+Y=0
+LeftMouseUpAction=#ActVolMute#
+MouseScrollUpAction=#ActVolUp#
+MouseScrollDownAction=#ActVolDown#
+MouseActionCursor=1
+[tVolIcon]
+Meter=String
+MeterStyle=sPillIcon
+Text=[\xE767]
+X=(#XVol#+{{11}})
+LeftMouseUpAction=#ActVolMute#
+MouseScrollUpAction=#ActVolUp#
+MouseScrollDownAction=#ActVolDown#
+[tVol]
+Meter=String
+MeterStyle=sPillText
+MeasureName=mVolNum
+Text=%1%
+NumOfDecimals=0
+StringAlign=RightCenter
+X=(#XVol#+#WVol#-{{12}})
+LeftMouseUpAction=#ActVolMute#
+MouseScrollUpAction=#ActVolUp#
+MouseScrollDownAction=#ActVolDown#
+
+[pBat]
+Meter=Shape
+Shape=Rectangle 0.5,0.5,(#WBat#-1),(#PH#-1),#PR# | Fill Color #PillBg# | Stroke Color #PillLine# | StrokeWidth 1
+X=#XBat#
+Y=0
+Hidden=#NoBattery#
+[tBatIcon]
+Meter=String
+MeterStyle=sPillIcon
+Text=[\xE83F]
+X=(#XBat#+{{11}})
+Hidden=#NoBattery#
+[tBat]
+Meter=String
+MeterStyle=sPillText
+MeasureName=mBat
+Text=%1%
+NumOfDecimals=0
+StringAlign=RightCenter
+X=(#XBat#+#WBat#-{{12}})
+Hidden=#NoBattery#
+
+[pSet]
+Meter=Shape
+Shape=Rectangle 0.5,0.5,(#WSet#-1),(#PH#-1),#PR# | Fill Color #PillBg# | Stroke Color #PillLine# | StrokeWidth 1
+X=#XSet#
+Y=0
+LeftMouseUpAction=#ActSettings#
+ToolTipText=#S_Settings#
+MouseActionCursor=1
+[tSet]
+Meter=String
+MeterStyle=sPillIcon
+Text=[\xE713]
+FontColor=#TextMain#
+StringAlign=CenterCenter
+X=(#XSet#+#WSet#/2)
+LeftMouseUpAction=#ActSettings#
+'@
+
+$Oz.ThemeTpl['Walls\Walls.ini'] = @'
+; OZZYHN wallpaper picker: slanted cards, color filters, scroll or click to browse, click the middle card to use it
+[Rainmeter]
+Update=-1
+AccurateText=1
+Group=OzAll
+OnRefreshAction=[!SetWindowPosition "50%" "#WallsY#" "50%" "0%"][!ZPos 1][!Draggable 0][!KeepOnScreen 1][!CommandMeasure mWalls "Render()"]
+ContextTitle=#S_Rescan#
+ContextAction=[!CommandMeasure mWalls "StartIndex()"]
+ContextTitle2=#S_OpenFolder#
+ContextAction2=["#WallFolderMain#"]
+
+[Metadata]
+Name=OZZYHN Wallpapers
+Author=OZZYHN TWEAKS
+Information=Made by Optimizaciones de Ozzyhn. Change it from the app's THEMES page.
+Version=1.0
+License=MIT
+
+[Variables]
+@Include=#@#Settings.inc
+@Include2=#@#Strings.inc
+@Include3=#@#Walls\Index.inc
+W={{1120}}
+H={{340}}
+Slot1=0
+Slot2=0
+Slot3=0
+Slot4=0
+Slot5=0
+Filter=A
+Count=
+
+[mWalls]
+Measure=Script
+ScriptFile=#@#Scripts\Walls.lua
+
+; The app asks for a fresh list after APPLY THEME (NeedIndex=1 in Index.inc)
+[mNeed]
+Measure=Calc
+Formula=#NeedIndex#
+IfCondition=mNeed = 1
+IfTrueAction=[!CommandMeasure mWalls "StartIndex()"]
+
+; Rebuilds the list and thumbnails after you add pictures to the folder
+[mIndex]
+Measure=Plugin
+Plugin=RunCommand
+Parameter=powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "#@#Scripts\WallIndex.ps1" -Out "#@#Walls"
+State=Hide
+OutputType=ANSI
+Timeout=180000
+FinishAction=[!UpdateMeasure mIndex][!CommandMeasure mWalls "AfterIndex()"]
+
+[sCard]
+PreserveAspectRatio=2
+DynamicVariables=1
+Group=Cards
+MouseActionCursor=1
+AntiAlias=1
+
+; ---------------- panel ----------------
+[mBox]
+Meter=Image
+W=#W#
+H=#H#
+SolidColor=0,0,0,0
+
+[pPanel]
+Meter=Shape
+Shape=Rectangle 0.5,0.5,(#W#-1),(#H#-1),{{22}} | Fill Color #PanelBg# | Stroke Color #PillLine# | StrokeWidth 1
+MouseScrollUpAction=[!CommandMeasure mWalls "Move(-1)"]
+MouseScrollDownAction=[!CommandMeasure mWalls "Move(1)"]
+
+; ---------------- filters ----------------
+[dAll]
+Meter=Shape
+Shape=Ellipse {{9}},{{9}},{{7}} | Fill Color 0,0,0,0 | Stroke Color #TextMain# | StrokeWidth {{1.5}}
+Shape2=Ellipse {{9}},{{9}},{{3}} | Fill Color #TextMain# | StrokeWidth 0
+X=((#W#-{{128}})/2)
+Y={{18}}
+LeftMouseUpAction=[!CommandMeasure mWalls "SetFilter('A')"]
+ToolTipText=#S_FilterAll#
+MouseActionCursor=1
+[dLight]
+Meter=Shape
+Shape=Ellipse {{9}},{{9}},{{7}} | Fill Color 236,236,236 | Stroke Color 255,255,255,90 | StrokeWidth 1
+X=((#W#-{{128}})/2+{{28}})
+Y={{18}}
+LeftMouseUpAction=[!CommandMeasure mWalls "SetFilter('L')"]
+ToolTipText=#S_FilterLight#
+MouseActionCursor=1
+[dDark]
+Meter=Shape
+Shape=Ellipse {{9}},{{9}},{{7}} | Fill Color 16,16,18 | Stroke Color 255,255,255,110 | StrokeWidth 1
+X=((#W#-{{128}})/2+{{56}})
+Y={{18}}
+LeftMouseUpAction=[!CommandMeasure mWalls "SetFilter('D')"]
+ToolTipText=#S_FilterDark#
+MouseActionCursor=1
+[dWarm]
+Meter=Shape
+Shape=Ellipse {{9}},{{9}},{{7}} | Fill Color 232,48,60 | Stroke Color 255,255,255,60 | StrokeWidth 1
+X=((#W#-{{128}})/2+{{84}})
+Y={{18}}
+LeftMouseUpAction=[!CommandMeasure mWalls "SetFilter('W')"]
+ToolTipText=#S_FilterWarm#
+MouseActionCursor=1
+[dCool]
+Meter=Shape
+Shape=Ellipse {{9}},{{9}},{{7}} | Fill Color 0,200,230 | Stroke Color 255,255,255,60 | StrokeWidth 1
+X=((#W#-{{128}})/2+{{112}})
+Y={{18}}
+LeftMouseUpAction=[!CommandMeasure mWalls "SetFilter('C')"]
+ToolTipText=#S_FilterCool#
+MouseActionCursor=1
+[dRing]
+Meter=Shape
+Shape=Ellipse {{12}},{{12}},{{10.5}} | Fill Color 0,0,0,0 | Stroke Color #Accent# | StrokeWidth {{1.5}}
+X=((#W#-{{128}})/2-{{3}})
+Y={{15}}
+DynamicVariables=1
+
+[bFolder]
+Meter=String
+Text=[\xE8B7]
+FontFace=#FontIcons#
+FontSize={{11}}
+FontColor=#TextSub#
+AntiAlias=1
+X={{22}}
+Y={{17}}
+LeftMouseUpAction=["#WallFolderMain#"]
+ToolTipText=#S_OpenFolder#
+MouseActionCursor=1
+[bRescan]
+Meter=String
+Text=[\xE72C]
+FontFace=#FontIcons#
+FontSize={{11}}
+FontColor=#TextSub#
+AntiAlias=1
+X={{16}}R
+Y={{17}}
+LeftMouseUpAction=[!CommandMeasure mWalls "StartIndex()"]
+ToolTipText=#S_Rescan#
+MouseActionCursor=1
+[bClose]
+Meter=String
+Text=[\xE711]
+FontFace=#FontIcons#
+FontSize={{10}}
+FontColor=#TextSub#
+AntiAlias=1
+StringAlign=Right
+X=(#W#-{{22}})
+Y={{18}}
+LeftMouseUpAction=[!DeactivateConfig]
+ToolTipText=#S_Close#
+MouseActionCursor=1
+
+; ---------------- cards (the script moves and fills them) ----------------
+[c1]
+Meter=Image
+MeterStyle=sCard
+ImageName=[#Thumb[#Slot1]]
+X={{70}}
+Y={{110}}
+W={{150}}
+H={{96}}
+ImageAlpha=110
+TransformationMatrix=1;0;-0.18;1;{{28}};0
+LeftMouseUpAction=[!CommandMeasure mWalls "Move(-2)"]
+[c5]
+Meter=Image
+MeterStyle=sCard
+ImageName=[#Thumb[#Slot5]]
+X={{900}}
+Y={{110}}
+W={{150}}
+H={{96}}
+ImageAlpha=110
+TransformationMatrix=1;0;-0.18;1;{{28}};0
+LeftMouseUpAction=[!CommandMeasure mWalls "Move(2)"]
+[c2]
+Meter=Image
+MeterStyle=sCard
+ImageName=[#Thumb[#Slot2]]
+X={{200}}
+Y={{88}}
+W={{230}}
+H={{140}}
+ImageAlpha=190
+TransformationMatrix=1;0;-0.18;1;{{28}};0
+LeftMouseUpAction=[!CommandMeasure mWalls "Move(-1)"]
+[c4]
+Meter=Image
+MeterStyle=sCard
+ImageName=[#Thumb[#Slot4]]
+X={{690}}
+Y={{88}}
+W={{230}}
+H={{140}}
+ImageAlpha=190
+TransformationMatrix=1;0;-0.18;1;{{28}};0
+LeftMouseUpAction=[!CommandMeasure mWalls "Move(1)"]
+[c3]
+Meter=Image
+MeterStyle=sCard
+ImageName=[#Thumb[#Slot3]]
+X={{390}}
+Y={{60}}
+W={{340}}
+H={{210}}
+TransformationMatrix=1;0;-0.18;1;{{30}};0
+LeftMouseUpAction=[!SetWallpaper "[#Wall[#Slot3]]" "#WallFit#"][!RefreshGroup OzClock]
+ToolTipText=#S_UseWallpaper#
+MouseScrollUpAction=[!CommandMeasure mWalls "Move(-1)"]
+MouseScrollDownAction=[!CommandMeasure mWalls "Move(1)"]
+
+[cGlow]
+Meter=Shape
+Shape=Path pGlow | Fill Color 0,0,0,0 | Stroke Color #Accent#,230 | StrokeWidth {{2}}
+pGlow={{409}},{{60}} | LineTo {{749}},{{60}} | LineTo {{711}},{{270}} | LineTo {{371}},{{270}} | ClosePath 1
+Hidden=1
+Group=Cards
+DynamicVariables=1
+; ---------------- captions ----------------
+[tName]
+Meter=String
+Text=[#Name[#Slot3]]
+FontFace=#FontBody#
+FontSize={{10}}
+FontWeight=600
+FontColor=#TextMain#
+AntiAlias=1
+StringAlign=Center
+ClipString=1
+W={{520}}
+X=(#W#/2)
+Y={{282}}
+DynamicVariables=1
+Group=Cards
+[tEmpty]
+Meter=String
+Text=#S_NoWalls#
+FontFace=#FontBody#
+FontSize={{10}}
+FontColor=#TextSub#
+AntiAlias=1
+StringAlign=CenterCenter
+W={{700}}
+ClipString=2
+X=(#W#/2)
+Y={{165}}
+Hidden=1
+[tScan]
+Meter=String
+Text=#S_Scanning#
+FontFace=#FontBody#
+FontSize={{10}}
+FontColor=#TextSub#
+AntiAlias=1
+StringAlign=CenterCenter
+W={{700}}
+ClipString=2
+X=(#W#/2)
+Y={{165}}
+Hidden=1
+[tFail]
+Meter=String
+Text=#S_IndexFailed#
+FontFace=#FontBody#
+FontSize={{10}}
+FontColor=#TextSub#
+AntiAlias=1
+StringAlign=CenterCenter
+W={{700}}
+ClipString=2
+X=(#W#/2)
+Y={{165}}
+Hidden=1
+[tCount]
+Meter=String
+Text=#Count#
+FontFace=#FontBody#
+FontSize={{8.5}}
+FontColor=#TextSub#
+AntiAlias=1
+StringAlign=Center
+X=(#W#/2)
+Y={{306}}
+DynamicVariables=1
+Group=Cards
+'@
+
+$Oz.ThemeTpl['@Resources\Scripts\Walls.lua'] = @'
+-- OZZYHN wallpaper picker. Keeps a list of wallpaper numbers for the chosen color filter and puts
+-- five of them on the cards. Only numbers pass through here: file names stay in Index.inc, so names
+-- with accents or other alphabets work.
+local count, tags, list, pos, filter, scanning = 0, {}, {}, 1, 'A', false
+local dots = { A = 'dAll', L = 'dLight', D = 'dDark', W = 'dWarm', C = 'dCool' }
+
+local function build()
+  list = {}
+  for i = 1, count do
+    if filter == 'A' or string.find(tags[i], filter, 1, true) then list[#list + 1] = i end
+  end
+  if pos > #list then pos = 1 end
+end
+
+function Render()
+  local n = #list
+  for s = -2, 2 do
+    local meter = 'c' .. (s + 3)
+    local idx = 0
+    if n > 0 then
+      if n >= 5 then
+        idx = list[((pos - 1 + s) % n) + 1]
+      elseif pos + s >= 1 and pos + s <= n then
+        idx = list[pos + s]
+      end
+    end
+    SKIN:Bang('!SetVariable', 'Slot' .. (s + 3), tostring(idx))
+    if idx > 0 then SKIN:Bang('!ShowMeter', meter) else SKIN:Bang('!HideMeter', meter) end
+  end
+  if n > 0 then
+    SKIN:Bang('!ShowMeter', 'cGlow')
+    SKIN:Bang('!HideMeter', 'tEmpty')
+    SKIN:Bang('!SetVariable', 'Count', pos .. ' / ' .. n)
+  else
+    SKIN:Bang('!HideMeter', 'cGlow')
+    if not scanning then SKIN:Bang('!ShowMeter', 'tEmpty') end
+    SKIN:Bang('!SetVariable', 'Count', '')
+  end
+  local dot = SKIN:GetMeter(dots[filter])
+  if dot then
+    SKIN:Bang('!SetOption', 'dRing', 'X', tostring(dot:GetX() - 3 * tonumber(SKIN:GetVariable('S', '1'))))
+  end
+  SKIN:Bang('!UpdateMeterGroup', 'Cards')
+  SKIN:Bang('!UpdateMeter', 'dRing')
+  SKIN:Bang('!Redraw')
+end
+
+function Initialize()
+  count = tonumber(SKIN:GetVariable('WallCount', '0')) or 0
+  for i = 1, count do tags[i] = SKIN:GetVariable('Tag' .. i, '') end
+  build()
+end
+
+function Update()
+  return #list
+end
+
+function StartIndex()
+  scanning = true
+  SKIN:Bang('!HideMeter', 'tEmpty')
+  SKIN:Bang('!HideMeter', 'tFail')
+  SKIN:Bang('!ShowMeter', 'tScan')
+  SKIN:Bang('!Redraw')
+  SKIN:Bang('!CommandMeasure', 'mIndex', 'Run')
+end
+
+-- The list script prints how many pictures it found. Nothing printed means it could not run
+-- (PowerShell blocked, for example): then the picker says so instead of trying again forever.
+function AfterIndex()
+  local m = SKIN:GetMeasure('mIndex')
+  local out = ''
+  if m then out = m:GetStringValue() or '' end
+  if string.find(out, '%d') then
+    SKIN:Bang('!Refresh')
+  else
+    scanning = false
+    SKIN:Bang('!HideMeter', 'tScan')
+    SKIN:Bang('!HideMeter', 'tEmpty')
+    SKIN:Bang('!ShowMeter', 'tFail')
+    SKIN:Bang('!Redraw')
+  end
+end
+
+function Move(d)
+  local n = #list
+  if n == 0 then return end
+  pos = ((pos - 1 + d) % n) + 1
+  Render()
+end
+
+function SetFilter(f)
+  if not dots[f] then return end
+  filter = f
+  pos = 1
+  build()
+  Render()
+end
+'@
+
+# Scripts the skins run themselves (as you, never as administrator). Written as they are, no sizes inside.
+$Oz.ThemeScripts = @{}
+
+$Oz.ThemeScripts['@Resources\Scripts\Luma.ps1'] = @'
+# OZZYHN theme (Optimizaciones de Ozzyhn): how bright is the wallpaper where the clock sits?
+# Prints "<color> <brightness>": color 0 = use the dark text, 1 = mid, 2 = light. Reads only.
+param([int]$Region = 20, [string]$Mode = 'contrast', [double]$Dark = 0.2, [double]$Light = 0.8,
+    [string]$Lums = '0.006,0.066,0.913', [double]$Cx = 0.5, [double]$Cy = 0.5)
+$ErrorActionPreference = 'Stop'
+$inv = [Globalization.CultureInfo]::InvariantCulture
+function Get-Lin([double]$c) { $c = $c / 255; if ($c -le 0.04045) { $c / 12.92 } else { [math]::Pow(($c + 0.055) / 1.055, 2.4) } }
+try {
+    $sumY = 0.0; $sumB = 0.0; $n = 0
+    $wp = [string](Get-ItemProperty -LiteralPath 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue).WallPaper
+    $file = Join-Path $env:APPDATA 'Microsoft\Windows\Themes\TranscodedWallpaper'
+    if (-not $wp) { $file = '' } elseif (-not [IO.File]::Exists($file)) { $file = $wp }
+    if ($file -and [IO.File]::Exists($file)) {
+        Add-Type -AssemblyName System.Drawing
+        $fs = [IO.File]::Open($file, 'Open', 'Read', 'ReadWrite')
+        try {
+            $img = [System.Drawing.Image]::FromStream($fs, $false, $false)
+            $Region = [math]::Max(5, [math]::Min(100, $Region))
+            $rw = [math]::Max(1, [int]($img.Width * $Region / 100)); $rh = [math]::Max(1, [int]($img.Height * $Region / 100))
+            $x0 = [int][math]::Min([math]::Max(0, $img.Width * $Cx - $rw / 2), $img.Width - $rw)
+            $y0 = [int][math]::Min([math]::Max(0, $img.Height * $Cy - $rh / 2), $img.Height - $rh)
+            $bmp = New-Object System.Drawing.Bitmap 24, 24
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBilinear
+            $g.DrawImage($img, (New-Object System.Drawing.Rectangle 0, 0, 24, 24), (New-Object System.Drawing.Rectangle $x0, $y0, $rw, $rh), [System.Drawing.GraphicsUnit]::Pixel)
+            $g.Dispose(); $img.Dispose()
+            for ($x = 0; $x -lt 24; $x++) {
+                for ($y = 0; $y -lt 24; $y++) {
+                    $p = $bmp.GetPixel($x, $y)
+                    $sumY += 0.2126 * (Get-Lin $p.R) + 0.7152 * (Get-Lin $p.G) + 0.0722 * (Get-Lin $p.B)
+                    $sumB += (0.2126 * $p.R + 0.7152 * $p.G + 0.0722 * $p.B) / 255
+                    $n++
+                }
+            }
+            $bmp.Dispose()
+        } finally { $fs.Dispose() }
+    } else {
+        # No picture: a solid color background
+        $c = @(([string](Get-ItemProperty -LiteralPath 'HKCU:\Control Panel\Colors' -ErrorAction Stop).Background).Trim() -split '\s+' | ForEach-Object { [double]$_ })
+        $sumY = 0.2126 * (Get-Lin $c[0]) + 0.7152 * (Get-Lin $c[1]) + 0.0722 * (Get-Lin $c[2])
+        $sumB = (0.2126 * $c[0] + 0.7152 * $c[1] + 0.0722 * $c[2]) / 255
+        $n = 1
+    }
+    $Y = $sumY / $n; $B = $sumB / $n
+    $slot = 2
+    if ($Mode -eq 'threshold') {
+        if ($B -lt $Dark) { $slot = 2 } elseif ($B -gt $Light) { $slot = 0 } else { $slot = 1 }
+    } else {
+        # The text color with the highest contrast against this part of the wallpaper (WCAG ratio)
+        $best = -1.0
+        $i = 0
+        foreach ($l in ($Lums -split ',')) {
+            $L = [double]::Parse($l, $inv)
+            $ratio = ([math]::Max($Y, $L) + 0.05) / ([math]::Min($Y, $L) + 0.05)
+            if ($ratio -gt $best) { $best = $ratio; $slot = $i }
+            $i++
+        }
+    }
+    Write-Output ('{0} {1}' -f $slot, $B.ToString('0.000', $inv))
+} catch { }
+'@
+
+$Oz.ThemeScripts['@Resources\Scripts\WallIndex.ps1'] = @'
+# OZZYHN theme (Optimizaciones de Ozzyhn): lists the pictures in your wallpaper folders for the picker,
+# makes small previews and sorts them by color. Your pictures are only read, never changed.
+param([string]$Root = $PSScriptRoot)
+$ErrorActionPreference = 'Stop'
+$res = Split-Path -Parent $Root
+$out = Join-Path $res 'Walls'
+$cache = Join-Path $out 'Cache'
+Add-Type -AssemblyName System.Drawing
+foreach ($d in $out, $cache) {
+    if (-not [IO.Directory]::Exists($d)) { [void][IO.Directory]::CreateDirectory($d) }
+    if (([IO.File]::GetAttributes($d) -band [IO.FileAttributes]::ReparsePoint)) { throw "Links are not used: $d" }
+}
+# Folders come from Settings.inc (written by the app): WallFolder1=..., WallFolder2=...
+$folders = @()
+foreach ($line in [IO.File]::ReadAllLines((Join-Path $res 'Settings.inc'))) {
+    if ($line -match '^\s*WallFolder\d+\s*=\s*(.+?)\s*$' -and [IO.Directory]::Exists($Matches[1])) { $folders += $Matches[1] }
+}
+$files = New-Object System.Collections.Generic.List[object]
+foreach ($f in $folders) {
+    foreach ($fi in @(Get-ChildItem -LiteralPath $f -File -ErrorAction SilentlyContinue | Sort-Object Name)) {
+        # # and [ ] mean something to Rainmeter, so such names are left out
+        if ($fi.Extension -notin '.jpg', '.jpeg', '.png', '.bmp' -or $fi.Name -match '[#\[\]]') { continue }
+        $files.Add($fi)
+        if ($files.Count -ge 300) { break }
+    }
+}
+$sha = [Security.Cryptography.SHA256]::Create()
+$keep = @{}
+$sb = New-Object System.Text.StringBuilder
+[void]$sb.AppendLine('[Variables]')
+[void]$sb.AppendLine('NeedIndex=0')
+[void]$sb.AppendLine('Wall0=')
+[void]$sb.AppendLine('Thumb0=')
+[void]$sb.AppendLine('Name0=')
+[void]$sb.AppendLine('Tag0=')
+$n = 0
+foreach ($fi in $files) {
+    try {
+        $key = '{0}|{1}|{2}' -f $fi.FullName, $fi.Length, $fi.LastWriteTimeUtc.Ticks
+        $h = -join ($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($key))[0..9] | ForEach-Object { $_.ToString('x2') })
+        $thumb = Join-Path $cache ($h + '.jpg')
+        if (-not [IO.File]::Exists($thumb)) {
+            $fs = [IO.File]::Open($fi.FullName, 'Open', 'Read', 'ReadWrite')
+            try {
+                $img = [System.Drawing.Image]::FromStream($fs, $false, $false)
+                $tw = 448; $th = 252
+                $scale = [math]::Max($tw / $img.Width, $th / $img.Height)
+                $sw = [int]($tw / $scale); $sh = [int]($th / $scale)
+                $sx = [int](($img.Width - $sw) / 2); $sy = [int](($img.Height - $sh) / 2)
+                $bmp = New-Object System.Drawing.Bitmap $tw, $th
+                $g = [System.Drawing.Graphics]::FromImage($bmp)
+                $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                $g.DrawImage($img, (New-Object System.Drawing.Rectangle 0, 0, $tw, $th), (New-Object System.Drawing.Rectangle $sx, $sy, $sw, $sh), [System.Drawing.GraphicsUnit]::Pixel)
+                $g.Dispose(); $img.Dispose()
+                $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
+                $ep = New-Object System.Drawing.Imaging.EncoderParameters 1
+                $ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality, [int64]84)
+                $bmp.Save($thumb, $codec, $ep)
+                $bmp.Dispose()
+            } finally { $fs.Dispose() }
+        }
+        # Color tags from the preview: L light, D dark, W warm (red / orange), C cool (blue / cyan / green)
+        $src = [System.Drawing.Image]::FromFile($thumb)
+        $s = New-Object System.Drawing.Bitmap 32, 18
+        $g = [System.Drawing.Graphics]::FromImage($s)
+        $g.DrawImage($src, 0, 0, 32, 18)
+        $g.Dispose(); $src.Dispose()
+        $sumB = 0.0; $warm = 0; $cool = 0; $tot = 0
+        for ($x = 0; $x -lt 32; $x++) {
+            for ($y = 0; $y -lt 18; $y++) {
+                $p = $s.GetPixel($x, $y)
+                $sumB += (0.2126 * $p.R + 0.7152 * $p.G + 0.0722 * $p.B) / 255
+                if ($p.GetSaturation() -gt 0.35 -and $p.GetBrightness() -gt 0.15) {
+                    $hue = $p.GetHue()
+                    if ($hue -lt 50 -or $hue -ge 330) { $warm++ } elseif ($hue -ge 160 -and $hue -lt 260) { $cool++ }
+                }
+                $tot++
+            }
+        }
+        $s.Dispose()
+        $b = $sumB / $tot
+        $tag = ''
+        if ($b -ge 0.58) { $tag += 'L' }
+        if ($b -le 0.30) { $tag += 'D' }
+        if ($warm / $tot -ge 0.18) { $tag += 'W' }
+        if ($cool / $tot -ge 0.18) { $tag += 'C' }
+        $n++
+        $keep[$thumb] = $true
+        $name = [IO.Path]::GetFileNameWithoutExtension($fi.Name)
+        if ($name.Length -gt 60) { $name = $name.Substring(0, 60) }
+        [void]$sb.AppendLine(('Wall{0}={1}' -f $n, $fi.FullName))
+        [void]$sb.AppendLine(('Thumb{0}={1}' -f $n, $thumb))
+        [void]$sb.AppendLine(('Name{0}={1}' -f $n, $name))
+        [void]$sb.AppendLine(('Tag{0}={1}' -f $n, $tag))
+    } catch { }
+}
+[void]$sb.AppendLine(('WallCount={0}' -f $n))
+[IO.File]::WriteAllText((Join-Path $out 'Index.inc'), $sb.ToString(), [Text.Encoding]::Unicode)
+foreach ($old in @(Get-ChildItem -LiteralPath $cache -File -Filter '*.jpg' -ErrorAction SilentlyContinue)) {
+    if (-not $keep.ContainsKey($old.FullName)) { Remove-Item -LiteralPath $old.FullName -Force -ErrorAction SilentlyContinue }
+}
+Write-Output $n
+'@
+#endregion
+
+#region ============================ THEMES (RAINMETER) ============================
+# Desktop themes for Rainmeter (rainmeter.net, free and open source). The app never downloads or
+# installs Rainmeter: it sends you to the official site. It writes its own skins into the Rainmeter
+# skins folder (OZZYHN), loads them, and removes them again with REMOVE THEME. Rainmeter is always
+# started as you, not as administrator, and the scripts inside the skins are never run by the app.
+
+# Color sets for the bar, dock and wallpaper picker. Colors are Rainmeter "r,g,b,alpha".
+$Oz.ThemeLooks = [ordered]@{
+    'mono-dark'  = @{ Name = 'MONO DARK'; Swatch = '#141416'; Edge = '#EEEEEE'; PillBg = '16,16,18,205'; PillLine = '255,255,255,28'; PanelBg = '12,12,14,228'
+        TextMain = '238,238,238'; TextSub = '238,238,238,150'; Accent = '255,255,255'; Accent2 = '150,150,150' }
+    'mono-light' = @{ Name = 'MONO LIGHT'; Swatch = '#F2F2F2'; Edge = '#202020'; PillBg = '245,245,245,215'; PillLine = '0,0,0,24'; PanelBg = '246,246,246,235'
+        TextMain = '24,24,24'; TextSub = '24,24,24,150'; Accent = '20,20,20'; Accent2 = '120,120,120' }
+    'neon'       = @{ Name = 'OZZYHN NEON'; Swatch = '#05070D'; Edge = '#00E5FF'; PillBg = '5,7,13,215'; PillLine = '0,229,255,64'; PanelBg = '5,7,13,235'
+        TextMain = '230,241,255'; TextSub = '138,155,191'; Accent = '0,229,255'; Accent2 = '255,43,214' }
+    'crimson'    = @{ Name = 'CRIMSON'; Swatch = '#140C0E'; Edge = '#FF3B50'; PillBg = '14,10,11,215'; PillLine = '255,59,80,58'; PanelBg = '12,8,9,235'
+        TextMain = '242,232,232'; TextSub = '242,232,232,140'; Accent = '255,59,80'; Accent2 = '255,150,80' }
+    'arctic'     = @{ Name = 'ARCTIC'; Swatch = '#0A1520'; Edge = '#78D2FF'; PillBg = '10,18,28,208'; PillLine = '120,200,255,52'; PanelBg = '8,14,22,232'
+        TextMain = '226,240,250'; TextSub = '160,190,210'; Accent = '120,210,255'; Accent2 = '180,140,255' }
+}
+$Oz.ThemeStyles = @('Horizon', 'Blade', 'Stack', 'Pulse', 'Minimal')
+$Oz.ThemePositions = @('TL', 'T', 'TR', 'L', 'C', 'R', 'BL', 'B', 'BR')
+# Rainmeter time formats and the .NET formats used to show an example in the app
+$Oz.ThemeDateFormats = @(
+    @{ Rm = '%d %b %Y'; Net = 'dd MMM yyyy' }, @{ Rm = '%#d %B'; Net = 'd MMMM' }, @{ Rm = '%b %d, %Y'; Net = 'MMM dd, yyyy' },
+    @{ Rm = '%d/%m/%Y'; Net = 'dd/MM/yyyy' }, @{ Rm = '%Y-%m-%d'; Net = 'yyyy-MM-dd' })
+
+# Words shown inside the skins. Spanish accents are HTML entities here and become real letters
+# when Strings.inc is written (as UTF-16).
+$Oz.ThemeWords = @{
+    en = [ordered]@{
+        S_RefreshColors = 'Refresh colors'; S_NextStyle = 'Next clock style'; S_Wallpapers = 'Wallpapers'; S_Settings = 'Windows Settings'
+        S_Mute = 'MUTE'; S_Rescan = 'Look for new pictures'; S_OpenFolder = 'Open the wallpaper folder'; S_Close = 'Close'
+        S_FilterAll = 'All'; S_FilterLight = 'Light'; S_FilterDark = 'Dark'; S_FilterWarm = 'Warm colors'; S_FilterCool = 'Cool colors'
+        S_UseWallpaper = 'Use as wallpaper'; S_NoWalls = 'No pictures yet. Add some to the wallpaper folder, then press the refresh button.'
+        S_Scanning = 'Looking for pictures...'; S_AllApps = 'All apps'
+        S_IndexFailed = 'The pictures could not be read. Check that PowerShell can run, then press the refresh button.'
+        S_G1Morning = 'GOOD'; S_G2Morning = 'MORNING'; S_G1Afternoon = 'GOOD'; S_G2Afternoon = 'AFTERNOON'
+        S_G1Evening = 'GOOD'; S_G2Evening = 'EVENING'; S_G1Night = 'GOOD'; S_G2Night = 'NIGHT'
+    }
+    es = [ordered]@{
+        S_RefreshColors = 'Actualizar colores'; S_NextStyle = 'Siguiente estilo de reloj'; S_Wallpapers = 'Fondos de pantalla'; S_Settings = 'Configuraci&oacute;n de Windows'
+        S_Mute = 'SILENCIO'; S_Rescan = 'Buscar im&aacute;genes nuevas'; S_OpenFolder = 'Abrir la carpeta de fondos'; S_Close = 'Cerrar'
+        S_FilterAll = 'Todos'; S_FilterLight = 'Claros'; S_FilterDark = 'Oscuros'; S_FilterWarm = 'Colores c&aacute;lidos'; S_FilterCool = 'Colores fr&iacute;os'
+        S_UseWallpaper = 'Usar como fondo'; S_NoWalls = 'A&uacute;n no hay im&aacute;genes. Agrega algunas a la carpeta de fondos y pulsa el bot&oacute;n de actualizar.'
+        S_Scanning = 'Buscando im&aacute;genes...'; S_AllApps = 'Todas las apps'
+        S_IndexFailed = 'No se pudieron leer las im&aacute;genes. Comprueba que PowerShell pueda ejecutarse y pulsa el bot&oacute;n de actualizar.'
+        S_G1Morning = 'BUENOS'; S_G2Morning = 'D&Iacute;AS'; S_G1Afternoon = 'BUENAS'; S_G2Afternoon = 'TARDES'
+        S_G1Evening = 'BUENAS'; S_G2Evening = 'NOCHES'; S_G1Night = 'BUENAS'; S_G2Night = 'NOCHES'
+    }
+}
+
+function Get-OzThemeDefaults {
+    $pics = [Environment]::GetFolderPath('MyPictures')
+    if (-not $pics) { $pics = Join-Path ([Environment]::GetFolderPath('UserProfile')) 'Pictures' }
+    $h24 = $true
+    try { $h24 = (Get-Culture).DateTimeFormat.ShortTimePattern -notmatch 'h' } catch { }
+    # Rainmeter draws in real pixels, so on a 125% / 150% screen the skins are made that much bigger
+    $scale = 100
+    try {
+        $dpi = [int](Get-ItemProperty -LiteralPath 'HKCU:\Control Panel\Desktop\WindowMetrics' -ErrorAction Stop).AppliedDPI
+        if ($dpi -ge 96) { $scale = [int]([math]::Round($dpi / 96 * 4) * 25) }
+    } catch { }
+    [ordered]@{
+        Look = 'mono-dark'; Scale = [math]::Min(200, [math]::Max(75, $scale)); Clock = $true; Style = 'Horizon'; Pos = 'C'
+        MarginX = 160; MarginY = 120; Hour24 = [bool]$h24; DateFmt = 0
+        AutoInk = $true; InkMode = 'contrast'; InkRegion = 20; InkDarkTh = 0.2; InkLightTh = 0.8; InkFixed = 2
+        InkDark = '#141414'; InkMid = '#4A4A4A'; InkLight = '#F5F5F5'
+        Bar = $true; BarOnTop = $false; Dock = $true; DockApps = @(); DockCustom = @(); HideSamples = $true
+        WallFolders = @((Join-Path $pics 'OZZYHN Wallpapers')); WallFit = 'Fill'
+    }
+}
+
+function Read-OzThemeSettings {
+    # The THEMES page settings (C:\ProgramData\Ozzyhn\theme.json), with defaults for anything missing
+    $cfg = Get-OzThemeDefaults
+    $file = Join-Path $Oz.DataDir 'theme.json'
+    try {
+        if (Test-Path -LiteralPath $file) {
+            $j = Get-Content -LiteralPath $file -Raw -ErrorAction Stop | ConvertFrom-Json
+            foreach ($p in $j.PSObject.Properties) { if ($cfg.Contains($p.Name)) { $cfg[$p.Name] = $p.Value } }
+        }
+    } catch { }
+    if (-not $Oz.ThemeLooks.Contains([string]$cfg.Look)) { $cfg.Look = 'mono-dark' }
+    if ($Oz.ThemeStyles -notcontains [string]$cfg.Style) { $cfg.Style = 'Horizon' }
+    if ($Oz.ThemePositions -notcontains [string]$cfg.Pos) { $cfg.Pos = 'C' }
+    $cfg.Scale = [int][math]::Min(200, [math]::Max(75, [int]$cfg.Scale))
+    $cfg.MarginX = [int][math]::Min(2000, [math]::Max(0, [int]$cfg.MarginX))
+    $cfg.MarginY = [int][math]::Min(2000, [math]::Max(0, [int]$cfg.MarginY))
+    $cfg.DateFmt = [int][math]::Min($Oz.ThemeDateFormats.Count - 1, [math]::Max(0, [int]$cfg.DateFmt))
+    $cfg.InkRegion = [int][math]::Min(100, [math]::Max(5, [int]$cfg.InkRegion))
+    $cfg.InkDarkTh = [math]::Round([math]::Min(1, [math]::Max(0, [double]$cfg.InkDarkTh)), 2)
+    $cfg.InkLightTh = [math]::Round([math]::Min(1, [math]::Max($cfg.InkDarkTh, [double]$cfg.InkLightTh)), 2)
+    $cfg.InkFixed = [int][math]::Min(2, [math]::Max(0, [int]$cfg.InkFixed))
+    if ($cfg.InkMode -notin 'contrast', 'threshold') { $cfg.InkMode = 'contrast' }
+    foreach ($k in 'InkDark', 'InkMid', 'InkLight') { if ([string]$cfg[$k] -notmatch '^#[0-9A-Fa-f]{6}$') { $cfg[$k] = (Get-OzThemeDefaults)[$k] } }
+    if ($cfg.WallFit -notin 'Fill', 'Fit', 'Stretch', 'Center', 'Span') { $cfg.WallFit = 'Fill' }
+    $cfg.WallFolders = @(@($cfg.WallFolders) | Where-Object { $_ -and [string]$_ -match '^[A-Za-z]:\\' } | ForEach-Object { [string]$_ } | Select-Object -Unique -First 8)
+    $cfg.DockApps = @(@($cfg.DockApps) | Where-Object { $_ } | ForEach-Object { [string]$_ })
+    $cfg.DockCustom = @(@($cfg.DockCustom) | Where-Object { $_ -and $_.Target } | Select-Object -First 12)
+    $cfg
+}
+
+function Save-OzThemeSettings {
+    param($Cfg)
+    try {
+        if (-not (Test-Path -LiteralPath $Oz.DataDir)) { New-Item -ItemType Directory -Path $Oz.DataDir -Force | Out-Null }
+        [pscustomobject]$Cfg | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $Oz.DataDir 'theme.json') -Encoding UTF8
+    } catch { Write-OzLog "Could not save theme settings: $($_.Exception.Message)" 'WARN' }
+}
+
+function Expand-OzThemeText {
+    # {{84}} -> 84 x scale, as whole pixels (one decimal for sizes under 10)
+    param([string]$Text, [double]$Scale)
+    $sb = New-Object System.Text.StringBuilder
+    $last = 0
+    foreach ($m in [regex]::Matches($Text, '\{\{(-?\d+(?:\.\d+)?)\}\}')) {
+        [void]$sb.Append($Text, $last, $m.Index - $last)
+        $v = [double]::Parse($m.Groups[1].Value, $Oz.Inv) * $Scale
+        if ([math]::Abs($v) -ge 10 -or [math]::Abs($v - [math]::Round($v)) -lt 0.05) { [void]$sb.Append([string][int][math]::Round($v)) }
+        else { [void]$sb.Append($v.ToString('0.0', $Oz.Inv)) }
+        $last = $m.Index + $m.Length
+    }
+    [void]$sb.Append($Text, $last, $Text.Length - $last)
+    $sb.ToString()
+}
+
+function ConvertTo-OzRmColor {
+    # '#F5F5F5' -> '245,245,245'
+    param([string]$Hex)
+    $h = $Hex.TrimStart('#')
+    '{0},{1},{2}' -f [Convert]::ToInt32($h.Substring(0, 2), 16), [Convert]::ToInt32($h.Substring(2, 2), 16), [Convert]::ToInt32($h.Substring(4, 2), 16)
+}
+
+function Get-OzRelLum {
+    # WCAG relative luminance of '#RRGGBB'
+    param([string]$Hex)
+    $h = $Hex.TrimStart('#')
+    $sum = 0.0
+    $w = 0.2126, 0.7152, 0.0722
+    for ($i = 0; $i -lt 3; $i++) {
+        $c = [Convert]::ToInt32($h.Substring($i * 2, 2), 16) / 255
+        $lin = if ($c -le 0.04045) { $c / 12.92 } else { [math]::Pow(($c + 0.055) / 1.055, 2.4) }
+        $sum += $w[$i] * $lin
+    }
+    $sum
+}
+
+function Get-OzThemePlace {
+    # Where the clock sits: Rainmeter window position, anchor, text alignment and the part of the
+    # wallpaper to read for its color (Cx, Cy as fractions of the screen)
+    param([string]$Pos, [int]$MarginX, [int]$MarginY)
+    $i = [array]::IndexOf($Oz.ThemePositions, $Pos)
+    if ($i -lt 0) { $i = 4 }
+    $col = $i % 3; $row = [math]::Floor($i / 3)
+    $x = @(('(#WORKAREAX#+{0})' -f $MarginX), '(#WORKAREAX#+#WORKAREAWIDTH#/2)', ('(#WORKAREAX#+#WORKAREAWIDTH#-{0})' -f $MarginX))[$col]
+    $y = @(('(#WORKAREAY#+{0})' -f $MarginY), '(#WORKAREAY#+#WORKAREAHEIGHT#/2)', ('(#WORKAREAY#+#WORKAREAHEIGHT#-{0})' -f $MarginY))[$row]
+    [pscustomobject]@{
+        PosX = $x; PosY = $y; AnchorX = @('0%', '50%', '100%')[$col]; AnchorY = @('0%', '50%', '100%')[$row]
+        Align = @('Left', 'Center', 'Right')[$col]; AlignK = @('0', '0.5', '1')[$col]
+        Cx = @('0.2', '0.5', '0.8')[$col]; Cy = @('0.22', '0.5', '0.78')[$row]
+    }
+}
+
+function Get-OzDockCatalog {
+    # Apps that can go on the dock, only those installed on this PC. Default = on the dock at first.
+    $sys = $env:SystemRoot
+    $pf = $env:ProgramFiles; $pf86 = ${env:ProgramFiles(x86)}; $la = $env:LOCALAPPDATA; $ra = $env:APPDATA
+    $steam = $null
+    try { $steam = [string](Get-ItemProperty -LiteralPath 'HKCU:\Software\Valve\Steam' -ErrorAction Stop).SteamExe } catch { }
+    if ($steam) { $steam = $steam -replace '/', '\' }
+    $list = @(
+        @{ Id = 'explorer'; Name = 'File Explorer'; Target = "$sys\explorer.exe"; Args = ''; Icon = ''; Default = $true }
+        @{ Id = 'edge'; Name = 'Microsoft Edge'; Target = "$pf86\Microsoft\Edge\Application\msedge.exe"; Args = ''; Icon = ''; Default = $false }
+        @{ Id = 'chrome'; Name = 'Google Chrome'; Target = @("$pf\Google\Chrome\Application\chrome.exe", "$la\Google\Chrome\Application\chrome.exe"); Args = ''; Icon = ''; Default = $true }
+        @{ Id = 'firefox'; Name = 'Firefox'; Target = "$pf\Mozilla Firefox\firefox.exe"; Args = ''; Icon = ''; Default = $true }
+        @{ Id = 'brave'; Name = 'Brave'; Target = @("$pf\BraveSoftware\Brave-Browser\Application\brave.exe", "$la\BraveSoftware\Brave-Browser\Application\brave.exe"); Args = ''; Icon = ''; Default = $true }
+        @{ Id = 'operagx'; Name = 'Opera GX'; Target = "$la\Programs\Opera GX\launcher.exe"; Args = ''; Icon = ''; Default = $true }
+        @{ Id = 'steam'; Name = 'Steam'; Target = @($steam, "$pf86\Steam\steam.exe"); Args = ''; Icon = ''; Default = $true }
+        @{ Id = 'epic'; Name = 'Epic Games'; Target = @("$pf86\Epic Games\Launcher\Portal\Binaries\Win64\EpicGamesLauncher.exe", "$pf86\Epic Games\Launcher\Portal\Binaries\Win32\EpicGamesLauncher.exe"); Args = ''; Icon = ''; Default = $false }
+        @{ Id = 'discord'; Name = 'Discord'; Target = "$la\Discord\Update.exe"; Args = '--processStart Discord.exe'; Icon = "$la\Discord\app.ico"; Default = $true }
+        @{ Id = 'spotify'; Name = 'Spotify'; Target = "$ra\Spotify\Spotify.exe"; Args = ''; Icon = ''; Default = $true }
+        @{ Id = 'obs'; Name = 'OBS Studio'; Target = "$pf\obs-studio\bin\64bit\obs64.exe"; Args = ''; Icon = ''; Default = $false }
+        @{ Id = 'vscode'; Name = 'VS Code'; Target = @("$la\Programs\Microsoft VS Code\Code.exe", "$pf\Microsoft VS Code\Code.exe"); Args = ''; Icon = ''; Default = $false }
+        @{ Id = 'taskmgr'; Name = 'Task Manager'; Target = "$sys\System32\Taskmgr.exe"; Args = ''; Icon = ''; Default = $false }
+        @{ Id = 'settings'; Name = 'Settings'; Target = "$sys\explorer.exe"; Args = 'ms-settings:'; Icon = "$sys\ImmersiveControlPanel\SystemSettings.exe,0"; Default = $true }
+        @{ Id = 'recycle'; Name = 'Recycle Bin'; Target = "$sys\explorer.exe"; Args = 'shell:RecycleBinFolder'; Icon = "$sys\System32\imageres.dll,-55"; Default = $true }
+    )
+    $found = @()
+    foreach ($a in $list) {
+        $t = @($a.Target) | Where-Object { $_ -and [IO.File]::Exists([string]$_) } | Select-Object -First 1
+        if (-not $t) { continue }
+        $icon = [string]$a.Icon
+        if ($icon -and -not [IO.File]::Exists(($icon -replace ',-?\d+$', ''))) { $icon = '' }
+        $found += [pscustomobject]@{ Id = $a.Id; Name = $a.Name; Target = [string]$t; Args = $a.Args; Icon = $icon; Default = $a.Default }
+    }
+    # Only one browser on by default: the first one found after Edge
+    $firstBrowser = $found | Where-Object { $_.Id -in 'chrome', 'firefox', 'brave', 'operagx' } | Select-Object -First 1
+    foreach ($a in $found) {
+        if ($a.Id -in 'chrome', 'firefox', 'brave', 'operagx' -and $firstBrowser -and $a.Id -ne $firstBrowser.Id) { $a.Default = $false }
+    }
+    if (-not $firstBrowser) { foreach ($a in $found) { if ($a.Id -eq 'edge') { $a.Default = $true } } }
+    $found
+}
+
+function Get-OzDockApps {
+    # The apps that go on the dock for these settings, in dock order
+    param($Cfg)
+    $cat = @(Get-OzDockCatalog)
+    $chosen = @($Cfg.DockApps)
+    $apps = @()
+    if ($chosen.Count) { foreach ($id in $chosen) { $apps += @($cat | Where-Object Id -EQ $id) } }
+    else { $apps = @($cat | Where-Object Default) }
+    foreach ($c in @($Cfg.DockCustom)) {
+        if ($c.Target -and [IO.File]::Exists([string]$c.Target)) {
+            $apps += [pscustomobject]@{ Id = 'custom'; Name = [string]$c.Name; Target = [string]$c.Target; Args = ''; Icon = ''; Default = $true }
+        }
+    }
+    @($apps | Select-Object -First 14)
+}
+
+function New-OzDockIni {
+    # The dock skin is written for the exact number of apps, so it needs no script
+    param([object[]]$Apps)
+    $n = $Apps.Count
+    $I = 46; $Gap = 12; $Pad = 12
+    $iconsW = $n * $I + [math]::Max(0, $n - 1) * $Gap
+    $W = 2 * $Pad + $iconsW + $Gap + 1 + $Gap + $I
+    $sb = New-Object System.Text.StringBuilder
+    $add = { param($l) [void]$sb.AppendLine($l) }
+    & $add '; OZZYHN dock: your apps in a floating bar. Choose the apps on the THEMES page.'
+    & $add '[Rainmeter]'
+    & $add 'Update=1000'
+    & $add 'AccurateText=1'
+    & $add 'Group=OzAll'
+    & $add 'OnRefreshAction=[!SetWindowPosition "(#WORKAREAX#+#WORKAREAWIDTH#/2)" "(#WORKAREAY#+#WORKAREAHEIGHT#-#DockM#)" "50%" "100%"][!ZPos -2][!Draggable 0]'
+    & $add ''
+    & $add '[Metadata]'
+    & $add 'Name=OZZYHN Dock'
+    & $add 'Author=OZZYHN TWEAKS'
+    & $add "Information=Made by Optimizaciones de Ozzyhn. Change it from the app's THEMES page."
+    & $add 'Version=1.0'
+    & $add 'License=MIT'
+    & $add ''
+    & $add '[Variables]'
+    & $add '@Include=#@#Settings.inc'
+    & $add '@Include2=#@#Strings.inc'
+    & $add ''
+    & $add '[mFolder]'
+    & $add 'Measure=Plugin'
+    & $add 'Plugin=FileView'
+    & $add 'Path=#@#Dock\Apps\'
+    & $add 'ShowDotDot=0'
+    & $add 'ShowFolder=0'
+    & $add 'SortType=Name'
+    & $add ('Count={0}' -f [math]::Max(1, $n))
+    for ($k = 1; $k -le $n; $k++) {
+        & $add ''
+        & $add ('[mIcon{0}]' -f $k)
+        & $add 'Measure=Plugin'
+        & $add 'Plugin=FileView'
+        & $add 'Path=[mFolder]'
+        & $add 'Type=Icon'
+        & $add 'IconSize=ExtraLarge'
+        & $add ('Index={0}' -f $k)
+        & $add ('IconPath=#@#Dock\Icons\{0}.ico' -f $k)
+    }
+    & $add ''
+    & $add '[mBox]'
+    & $add 'Meter=Image'
+    & $add ('W={{{{{0}}}}}' -f $W)
+    & $add ('H={{{{{0}}}}}' -f (10 + $I + 2 * $Pad))
+    & $add 'SolidColor=0,0,0,0'
+    & $add ''
+    & $add '[pDock]'
+    & $add 'Meter=Shape'
+    & $add ('Shape=Rectangle 0.5,{{{{10}}}},{{{{{0}}}}},{{{{{1}}}}},{{{{20}}}} | Fill Color #PillBg# | Stroke Color #PillLine# | StrokeWidth 1' -f ($W - 1), ($I + 2 * $Pad))
+    $x = $Pad
+    for ($k = 1; $k -le $n; $k++) {
+        $a = $Apps[$k - 1]
+        $lnk = '#@#Dock\Apps\{0:D2}.lnk' -f $k
+        & $add ''
+        & $add ('[i{0}]' -f $k)
+        & $add 'Meter=Image'
+        & $add ('MeasureName=mIcon{0}' -f $k)
+        & $add ('X={{{{{0}}}}}' -f $x)
+        & $add ('Y={{{{{0}}}}}' -f (10 + $Pad))
+        & $add ('W={{{{{0}}}}}' -f $I)
+        & $add ('H={{{{{0}}}}}' -f $I)
+        & $add 'PreserveAspectRatio=1'
+        & $add 'AntiAlias=1'
+        & $add ('ToolTipText={0}' -f ([string]$a.Name -replace '[\r\n#\[\]]', ''))
+        & $add ('LeftMouseUpAction=["{0}"]' -f $lnk)
+        & $add 'MouseActionCursor=1'
+        & $add ('MouseOverAction=[!SetOption i{0} X "{{{{{1}}}}}"][!SetOption i{0} Y "{{{{{2}}}}}"][!SetOption i{0} W "{{{{{3}}}}}"][!SetOption i{0} H "{{{{{3}}}}}"][!UpdateMeter i{0}][!Redraw]' -f $k, ($x - 4), (10 + $Pad - 9), ($I + 8))
+        & $add ('MouseLeaveAction=[!SetOption i{0} X "{{{{{1}}}}}"][!SetOption i{0} Y "{{{{{2}}}}}"][!SetOption i{0} W "{{{{{3}}}}}"][!SetOption i{0} H "{{{{{3}}}}}"][!UpdateMeter i{0}][!Redraw]' -f $k, $x, (10 + $Pad), $I)
+        $x += $I + $Gap
+    }
+    $sepX = $Pad + $iconsW + $Gap
+    & $add ''
+    & $add '[lSep]'
+    & $add 'Meter=Shape'
+    & $add ('Shape=Line {{{{{0}}}}},{{{{{1}}}}},{{{{{0}}}}},{{{{{2}}}}} | StrokeWidth 1 | Stroke Color #PillLine#' -f $sepX, (10 + $Pad + 8), (10 + $Pad + $I - 8))
+    & $add ''
+    & $add '[bApps]'
+    & $add 'Meter=String'
+    & $add 'Text=[\xE71D]'
+    & $add 'FontFace=#FontIcons#'
+    & $add 'FontSize={{18}}'
+    & $add 'FontColor=#TextMain#'
+    & $add 'AntiAlias=1'
+    & $add 'StringAlign=CenterCenter'
+    & $add ('X={{{{{0}}}}}' -f ($sepX + $Gap + $I / 2))
+    & $add ('Y={{{{{0}}}}}' -f (10 + $Pad + $I / 2))
+    & $add 'ToolTipText=#S_AllApps#'
+    & $add 'LeftMouseUpAction=["explorer.exe" "shell:AppsFolder"]'
+    & $add 'MouseActionCursor=1'
+    $sb.ToString()
+}
+
+function New-OzThemeFiles {
+    # Every file of the theme as text, by path inside Skins\OZZYHN. Unicode = written as UTF-16
+    # (Rainmeter reads that for names with accents); the rest is plain ASCII.
+    param($Cfg, [int]$InkSlot = 2)
+    $s = [double]$Cfg.Scale / 100
+    $look = $Oz.ThemeLooks[[string]$Cfg.Look]
+    $place = Get-OzThemePlace $Cfg.Pos $Cfg.MarginX $Cfg.MarginY
+    $lang = if ($Oz.Lang -eq 'es') { 'es' } else { 'en' }
+    $hasBat = [bool]($Oz.Sys -and $Oz.Sys.Battery -and $Oz.Sys.Battery.Present)
+    $date = $Oz.ThemeDateFormats[[int]$Cfg.DateFmt].Rm
+    $time = if ($Cfg.Hour24) { '%H:%M' } else { '%#I:%M %p' }
+    $folders = @($Cfg.WallFolders)
+    $files = [ordered]@{}
+
+    $set = New-Object System.Text.StringBuilder
+    $line = { param($k, $v) [void]$set.AppendLine(('{0}={1}' -f $k, $v)) }
+    [void]$set.AppendLine('; Written by Optimizaciones de Ozzyhn (THEMES page). Change it there: this file is replaced on APPLY.')
+    [void]$set.AppendLine('[Variables]')
+    & $line 'S' $s.ToString('0.##', $Oz.Inv)
+    & $line 'Locale' $(if ($lang -eq 'es') { 'es-ES' } else { 'en-US' })
+    & $line 'TimeFmt' $time
+    & $line 'HourFmt' $(if ($Cfg.Hour24) { '%H' } else { '%#I' })
+    & $line 'TimeShort' $(if ($Cfg.Hour24) { '%H:%M' } else { '%#I:%M' })
+    & $line 'PulseInfo' $(if ($Cfg.Hour24) { '%1  [\x00B7]  %2' } else { '%1  [\x00B7]  %2  [\x00B7]  %3' })
+    & $line 'DateFmt' $date
+    & $line 'BarTimeFmt' ('%a %d %b   ' + $(if ($Cfg.Hour24) { '%H:%M:%S' } else { '%#I:%M:%S %p' }))
+    foreach ($p in 'PosX', 'PosY', 'AnchorX', 'AnchorY', 'Align', 'AlignK') { & $line $p $place.$p }
+    & $line 'AutoInk' $(if ($Cfg.AutoInk) { 1 } else { 0 })
+    & $line 'NoAutoInk' $(if ($Cfg.AutoInk) { 0 } else { 1 })
+    & $line 'InkMode' $Cfg.InkMode
+    & $line 'InkRegion' $Cfg.InkRegion
+    & $line 'InkDarkTh' ([double]$Cfg.InkDarkTh).ToString('0.00', $Oz.Inv)
+    & $line 'InkLightTh' ([double]$Cfg.InkLightTh).ToString('0.00', $Oz.Inv)
+    & $line 'InkFixed' $Cfg.InkFixed
+    & $line 'InkCx' $place.Cx
+    & $line 'InkCy' $place.Cy
+    & $line 'InkDark' (ConvertTo-OzRmColor $Cfg.InkDark)
+    & $line 'InkMid' (ConvertTo-OzRmColor $Cfg.InkMid)
+    & $line 'InkLight' (ConvertTo-OzRmColor $Cfg.InkLight)
+    & $line 'InkLums' ((@($Cfg.InkDark, $Cfg.InkMid, $Cfg.InkLight) | ForEach-Object { (Get-OzRelLum $_).ToString('0.0000', $Oz.Inv) }) -join ',')
+    foreach ($k in 'PillBg', 'PillLine', 'PanelBg', 'TextMain', 'TextSub', 'Accent', 'Accent2') { & $line $k $look[$k] }
+    & $line 'FontDisplay' 'Bahnschrift'
+    & $line 'FontBody' 'Segoe UI'
+    & $line 'FontIcons' 'Segoe MDL2 Assets'
+    & $line 'HasBattery' $(if ($hasBat) { 1 } else { 0 })
+    & $line 'NoBattery' $(if ($hasBat) { 0 } else { 1 })
+    & $line 'BarX' ([int][math]::Round(12 * $s))
+    & $line 'BarY' ('(#WORKAREAY#+{0})' -f [int][math]::Round(8 * $s))
+    & $line 'BarZ' $(if ($Cfg.BarOnTop) { 1 } else { -2 })
+    & $line 'DockM' ([int][math]::Round(12 * $s))
+    & $line 'WallsY' ('(#WORKAREAY#+{0})' -f [int][math]::Round(64 * $s))
+    & $line 'WallFit' $Cfg.WallFit
+    & $line 'WallFolderMain' $(if ($folders.Count) { $folders[0] } else { [Environment]::GetFolderPath('MyPictures') })
+    for ($i = 0; $i -lt $folders.Count; $i++) { & $line ('WallFolder{0}' -f ($i + 1)) $folders[$i] }
+    $files['@Resources\Settings.inc'] = @{ Text = $set.ToString(); Unicode = $true }
+
+    $str = New-Object System.Text.StringBuilder
+    [void]$str.AppendLine('[Variables]')
+    foreach ($k in $Oz.ThemeWords[$lang].Keys) { [void]$str.AppendLine(('{0}={1}' -f $k, [System.Net.WebUtility]::HtmlDecode($Oz.ThemeWords[$lang][$k]))) }
+    $files['@Resources\Strings.inc'] = @{ Text = $str.ToString(); Unicode = $true }
+    $files['@Resources\State.inc'] = @{ Text = ("[Variables]`r`nInkSlot={0}`r`n" -f $InkSlot); Unicode = $true }
+    $files['@Resources\Walls\Index.inc'] = @{ Text = "[Variables]`r`nNeedIndex=1`r`nWallCount=0`r`nWall0=`r`nThumb0=`r`nName0=`r`nTag0=`r`n"; Unicode = $true }
+
+    foreach ($k in $Oz.ThemeTpl.Keys) { $files[$k] = @{ Text = (Expand-OzThemeText $Oz.ThemeTpl[$k] $s); Unicode = $false } }
+    foreach ($k in $Oz.ThemeScripts.Keys) { $files[$k] = @{ Text = $Oz.ThemeScripts[$k]; Unicode = $false } }
+    $dock = @(Get-OzDockApps $Cfg)
+    $files['Dock\Dock.ini'] = @{ Text = (Expand-OzThemeText (New-OzDockIni $dock) $s); Unicode = $true }
+    $files
+}
+
+function Get-OzRainmeter {
+    # Finds Rainmeter (installed or portable), its settings and skins folders, and which of our skins are loaded
+    $r = [ordered]@{ Installed = $false; Exe = ''; Version = ''; Running = $false; SettingsDir = ''; Ini = ''; SkinPath = ''; Active = @{}; Samples = @() }
+    $dirs = @()
+    foreach ($k in 'HKLM:\SOFTWARE\WOW6432Node\Rainmeter', 'HKLM:\SOFTWARE\Rainmeter') {
+        try { $v = (Get-Item -LiteralPath $k -ErrorAction Stop).GetValue(''); if ($v) { $dirs += [string]$v } } catch { }
+    }
+    $proc = @(Get-Process -Name Rainmeter -ErrorAction SilentlyContinue)
+    foreach ($p in $proc) { try { if ($p.Path) { $dirs += (Split-Path -Parent $p.Path) } } catch { } }
+    $dirs += (Join-Path $env:ProgramFiles 'Rainmeter')
+    if (${env:ProgramFiles(x86)}) { $dirs += (Join-Path ${env:ProgramFiles(x86)} 'Rainmeter') }
+    foreach ($d in $dirs) {
+        if ($d -and [IO.File]::Exists((Join-Path $d 'Rainmeter.exe'))) { $r.Exe = Join-Path $d 'Rainmeter.exe'; break }
+    }
+    if (-not $r.Exe) { return [pscustomobject]$r }
+    $r.Installed = $true
+    try { $r.Version = [string](Get-Item -LiteralPath $r.Exe).VersionInfo.ProductVersion } catch { }
+    $r.Running = $proc.Count -gt 0
+    $dir = Split-Path -Parent $r.Exe
+    # Portable copies keep Rainmeter.ini next to Rainmeter.exe
+    $r.SettingsDir = if ([IO.File]::Exists((Join-Path $dir 'Rainmeter.ini'))) { $dir } else { Join-Path $env:APPDATA 'Rainmeter' }
+    $r.Ini = Join-Path $r.SettingsDir 'Rainmeter.ini'
+    $skins = ''
+    $section = ''
+    if ([IO.File]::Exists($r.Ini)) {
+        foreach ($line in [IO.File]::ReadAllLines($r.Ini)) {
+            if ($line -match '^\s*\[(.+)\]\s*$') { $section = $Matches[1]; continue }
+            if ($section -eq 'Rainmeter' -and $line -match '^\s*SkinPath\s*=\s*(.+?)\s*$') { $skins = $Matches[1] }
+            if ($line -match '^\s*Active\s*=\s*(\d+)') {
+                $n = [int]$Matches[1]
+                if ($n -gt 0 -and $section -like 'OZZYHN\*') { $r.Active[$section] = $n }
+                if ($n -gt 0 -and $section -like 'illustro\*') { $r.Samples += $section }
+            }
+        }
+    }
+    if (-not $skins) {
+        $skins = if ($r.SettingsDir -eq $dir) { Join-Path $dir 'Skins' } else { Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Rainmeter\Skins' }
+    }
+    $r.SkinPath = [Environment]::ExpandEnvironmentVariables($skins).TrimEnd('\')
+    [pscustomobject]$r
+}
+
+function Get-OzActiveClockStyle {
+    # Rainmeter.ini stores the loaded file as its position in the folder (alphabetical)
+    param($Rm)
+    if (-not $Rm.Active.ContainsKey('OZZYHN\Clock')) { return $null }
+    $sorted = @($Oz.ThemeStyles | Sort-Object)
+    $i = [int]$Rm.Active['OZZYHN\Clock'] - 1
+    if ($i -ge 0 -and $i -lt $sorted.Count) { return $sorted[$i] }
+    $null
+}
+
+function Test-OzNoLinkPath {
+    # True when no folder on the way to $Path is a junction or symbolic link. The app writes there as
+    # administrator, so a link planted by another program must never redirect it somewhere else.
+    param([string]$Path)
+    try { $full = [IO.Path]::GetFullPath($Path).TrimEnd('\') } catch { return $false }
+    $root = [IO.Path]::GetPathRoot($full).TrimEnd('\')
+    for ($d = $full; $d -and $d.Length -gt $root.Length; $d = [IO.Path]::GetDirectoryName($d)) {
+        if (-not ([IO.Directory]::Exists($d) -or [IO.File]::Exists($d))) { continue }
+        try {
+            $item = Get-Item -LiteralPath $d -Force -ErrorAction Stop
+            if ([string]$item.LinkType -in 'Junction', 'SymbolicLink') { return $false }
+        } catch { return $false }
+    }
+    $true
+}
+
+function Write-OzThemeFile {
+    param([string]$Path, [string]$Text, [bool]$Unicode)
+    $dir = Split-Path -Parent $Path
+    if (-not (Test-OzNoLinkPath $dir)) { throw "A folder on the way to $dir is a link, so nothing was written there." }
+    if (-not [IO.Directory]::Exists($dir)) { [void][IO.Directory]::CreateDirectory($dir) }
+    if ([IO.File]::Exists($Path) -and -not (Test-OzNoLinkPath $Path)) { throw "$Path is a link, so it was not replaced." }
+    $enc = if ($Unicode) { [Text.Encoding]::Unicode } else { New-Object Text.UTF8Encoding($false) }
+    [IO.File]::WriteAllText($Path, ($Text -replace "`r?`n", "`r`n"), $enc)
+}
+
+function Start-OzRainmeterUser {
+    # Starts Rainmeter as the signed-in user, never as administrator: dock clicks and skin scripts
+    # then run without admin rights. Explorer starts it for us; a one-time task is the fallback.
+    param($Rm)
+    if (@(Get-Process -Name Rainmeter -ErrorAction SilentlyContinue).Count) { return $true }
+    $wait = {
+        for ($i = 0; $i -lt 40; $i++) {
+            if (@(Get-Process -Name Rainmeter -ErrorAction SilentlyContinue).Count) { Start-Sleep -Milliseconds 1500; return $true }
+            Start-Sleep -Milliseconds 250
+        }
+        $false
+    }
+    if (@(Get-Process -Name explorer -ErrorAction SilentlyContinue).Count) {
+        try { Start-Process -FilePath "$env:SystemRoot\explorer.exe" -ArgumentList ('"{0}"' -f $Rm.Exe) -ErrorAction Stop } catch { }
+        if (& $wait) { return $true }
+    }
+    $task = 'Ozzyhn - start Rainmeter'
+    try {
+        $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+        $act = New-ScheduledTaskAction -Execute $Rm.Exe
+        $pr = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
+        Register-ScheduledTask -TaskName $task -TaskPath '\' -Action $act -Principal $pr -Force -ErrorAction Stop | Out-Null
+        Start-ScheduledTask -TaskName $task -TaskPath '\' -ErrorAction Stop
+        $ok = & $wait
+    } catch { $ok = $false }
+    finally { try { Unregister-ScheduledTask -TaskName $task -TaskPath '\' -Confirm:$false -ErrorAction SilentlyContinue } catch { } }
+    $ok
+}
+
+function Send-OzRainmeterBang {
+    # Hands one bang to the running Rainmeter (Rainmeter.exe forwards it and exits)
+    param($Rm, [string]$Bang, [string[]]$Arguments = @())
+    $line = (@($Bang) + @($Arguments | ForEach-Object { '"{0}"' -f ($_ -replace '"', '') })) -join ' '
+    try {
+        $p = Start-Process -FilePath $Rm.Exe -ArgumentList $line -PassThru -WindowStyle Hidden -ErrorAction Stop
+        if (-not $p.WaitForExit(15000)) { Write-OzLog "Rainmeter did not answer: $line" 'WARN' }
+    } catch { Write-OzLog "Rainmeter bang failed ($line): $($_.Exception.Message)" 'WARN' }
+}
+
+function New-OzDockShortcuts {
+    # Dock\Apps\01.lnk, 02.lnk... in dock order. The dock reads their icons with Rainmeter's FileView.
+    param([string]$Dir, [object[]]$Apps)
+    if (-not (Test-OzNoLinkPath $Dir)) { throw "A folder on the way to $Dir is a link, so the dock was not written." }
+    if ([IO.Directory]::Exists($Dir)) { [void](Clear-OzFolder -Path $Dir -Filter '*.lnk') }
+    else { [void][IO.Directory]::CreateDirectory($Dir) }
+    $sh = New-Object -ComObject WScript.Shell
+    try {
+        for ($k = 1; $k -le $Apps.Count; $k++) {
+            $a = $Apps[$k - 1]
+            $l = $sh.CreateShortcut((Join-Path $Dir ('{0:D2}.lnk' -f $k)))
+            $l.TargetPath = $a.Target
+            if ($a.Args) { $l.Arguments = $a.Args }
+            if ($a.Icon) { $l.IconLocation = $a.Icon }
+            $l.WorkingDirectory = Split-Path -Parent $a.Target
+            $l.Description = $a.Name
+            $l.Save()
+        }
+    } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($sh) }
+}
+
+function Get-OzWallLuma {
+    # Same reading as the skins' Luma.ps1: brightness (0-1) and the best text color (0 dark, 1 mid, 2 light)
+    # for the part of the wallpaper at Cx, Cy. Used for the preview and the first color after APPLY.
+    param($Cfg)
+    $place = Get-OzThemePlace $Cfg.Pos $Cfg.MarginX $Cfg.MarginY
+    $res = [pscustomobject]@{ Slot = 2; Brightness = 0.0; File = '' }
+    try {
+        $wp = [string](Get-ItemProperty -LiteralPath 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue).WallPaper
+        $file = Join-Path $env:APPDATA 'Microsoft\Windows\Themes\TranscodedWallpaper'
+        if (-not $wp) { $file = '' } elseif (-not [IO.File]::Exists($file)) { $file = $wp }
+        $lin = { param([double]$c) $c = $c / 255; if ($c -le 0.04045) { $c / 12.92 } else { [math]::Pow(($c + 0.055) / 1.055, 2.4) } }
+        $sumY = 0.0; $sumB = 0.0; $n = 0
+        if ($file -and [IO.File]::Exists($file)) {
+            $res.File = $file
+            Add-Type -AssemblyName System.Drawing
+            # A 384 x 216 copy of the wallpaper is kept between calls on the window's thread, so the
+            # preview follows each click without decoding the full picture again
+            $key = '{0}|{1}' -f $file, ([IO.File]::GetLastWriteTimeUtc($file).Ticks)
+            $small = $null
+            if (-not $OzWorker -and $Oz.ThemeLumaKey -eq $key -and $Oz.ThemeLumaSmall) { $small = $Oz.ThemeLumaSmall }
+            else {
+                $fs = [IO.File]::Open($file, 'Open', 'Read', 'ReadWrite')
+                try {
+                    $img = [System.Drawing.Image]::FromStream($fs, $false, $false)
+                    $small = New-Object System.Drawing.Bitmap 384, 216
+                    $g = [System.Drawing.Graphics]::FromImage($small)
+                    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBilinear
+                    $g.DrawImage($img, 0, 0, 384, 216)
+                    $g.Dispose(); $img.Dispose()
+                } finally { $fs.Dispose() }
+                if (-not $OzWorker) {
+                    if ($Oz.ThemeLumaSmall) { try { $Oz.ThemeLumaSmall.Dispose() } catch { } }
+                    $Oz.ThemeLumaSmall = $small; $Oz.ThemeLumaKey = $key
+                }
+            }
+            $rw = [math]::Max(1, [int](384 * $Cfg.InkRegion / 100)); $rh = [math]::Max(1, [int](216 * $Cfg.InkRegion / 100))
+            $x0 = [int][math]::Min([math]::Max(0, 384 * [double]$place.Cx - $rw / 2), 384 - $rw)
+            $y0 = [int][math]::Min([math]::Max(0, 216 * [double]$place.Cy - $rh / 2), 216 - $rh)
+            $bmp = New-Object System.Drawing.Bitmap 24, 24
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBilinear
+            $g.DrawImage($small, (New-Object System.Drawing.Rectangle 0, 0, 24, 24), (New-Object System.Drawing.Rectangle $x0, $y0, $rw, $rh), [System.Drawing.GraphicsUnit]::Pixel)
+            $g.Dispose()
+            if ($OzWorker) { $small.Dispose() }
+            for ($x = 0; $x -lt 24; $x++) {
+                for ($y = 0; $y -lt 24; $y++) {
+                    $p = $bmp.GetPixel($x, $y)
+                    $sumY += 0.2126 * (& $lin $p.R) + 0.7152 * (& $lin $p.G) + 0.0722 * (& $lin $p.B)
+                    $sumB += (0.2126 * $p.R + 0.7152 * $p.G + 0.0722 * $p.B) / 255
+                    $n++
+                }
+            }
+            $bmp.Dispose()
+        } else {
+            $c = @(([string](Get-ItemProperty -LiteralPath 'HKCU:\Control Panel\Colors' -ErrorAction Stop).Background).Trim() -split '\s+' | ForEach-Object { [double]$_ })
+            $sumY = 0.2126 * (& $lin $c[0]) + 0.7152 * (& $lin $c[1]) + 0.0722 * (& $lin $c[2])
+            $sumB = (0.2126 * $c[0] + 0.7152 * $c[1] + 0.0722 * $c[2]) / 255
+            $n = 1
+        }
+        $Y = $sumY / $n; $B = $sumB / $n
+        $res.Brightness = $B
+        if ($Cfg.InkMode -eq 'threshold') {
+            $res.Slot = if ($B -lt $Cfg.InkDarkTh) { 2 } elseif ($B -gt $Cfg.InkLightTh) { 0 } else { 1 }
+        } else {
+            $best = -1.0; $i = 0
+            foreach ($h in @($Cfg.InkDark, $Cfg.InkMid, $Cfg.InkLight)) {
+                $L = Get-OzRelLum $h
+                $ratio = ([math]::Max($Y, $L) + 0.05) / ([math]::Min($Y, $L) + 0.05)
+                if ($ratio -gt $best) { $best = $ratio; $res.Slot = $i }
+                $i++
+            }
+        }
+    } catch { }
+    $res
+}
+
+function Install-OzTheme {
+    # Writes the skins for these settings, starts Rainmeter as the user if needed and loads them
+    param($Cfg)
+    $rm = Get-OzRainmeter
+    if (-not $rm.Installed) { throw (T 'Rainmeter is not installed. Press GET RAINMETER, install it, then try again.') }
+    $root = Join-Path $rm.SkinPath 'OZZYHN'
+    $ink = Get-OzWallLuma $Cfg
+    $files = New-OzThemeFiles -Cfg $Cfg -InkSlot $ink.Slot
+    foreach ($k in $files.Keys) { Write-OzThemeFile -Path (Join-Path $root $k) -Text $files[$k].Text -Unicode $files[$k].Unicode }
+    foreach ($d in 'Dock\Icons', 'Walls\Cache') {
+        $p = Join-Path $root "@Resources\$d"
+        if (-not (Test-OzNoLinkPath $p)) { throw "A folder on the way to $p is a link." }
+        if (-not [IO.Directory]::Exists($p)) { [void][IO.Directory]::CreateDirectory($p) }
+    }
+    New-OzDockShortcuts -Dir (Join-Path $root '@Resources\Dock\Apps') -Apps @(Get-OzDockApps $Cfg)
+    foreach ($f in @($Cfg.WallFolders)) {
+        if ($f -and -not [IO.Directory]::Exists($f) -and $f -match 'OZZYHN Wallpapers$' -and (Test-OzNoLinkPath (Split-Path -Parent $f))) {
+            [void][IO.Directory]::CreateDirectory($f)
+        }
+    }
+    Write-OzLog ((T 'Theme files written to {0}') -f $root) 'OK'
+
+    if (-not (Start-OzRainmeterUser $rm)) { throw (T 'Rainmeter did not start. Open it from the Start menu, then press APPLY THEME again.') }
+    Send-OzRainmeterBang $rm '!RefreshApp'
+    Start-Sleep -Milliseconds 1500
+    $rm = Get-OzRainmeter
+    $want = [ordered]@{ 'OZZYHN\Clock' = $(if ($Cfg.Clock) { "$($Cfg.Style).ini" }); 'OZZYHN\Bar' = $(if ($Cfg.Bar) { 'Bar.ini' }); 'OZZYHN\Dock' = $(if ($Cfg.Dock) { 'Dock.ini' }) }
+    $clockNow = Get-OzActiveClockStyle $rm
+    foreach ($c in $want.Keys) {
+        if ($want[$c]) {
+            # Loading a skin that is already loaded makes Rainmeter log a warning, so it is refreshed instead
+            $same = $rm.Active.ContainsKey($c) -and ($c -ne 'OZZYHN\Clock' -or "$clockNow.ini" -eq $want[$c])
+            if ($same) { Send-OzRainmeterBang $rm '!Refresh' @($c) } else { Send-OzRainmeterBang $rm '!ActivateConfig' @($c, $want[$c]) }
+        } elseif ($rm.Active.ContainsKey($c)) { Send-OzRainmeterBang $rm '!DeactivateConfig' @($c) }
+    }
+    if ($Cfg.HideSamples) { foreach ($c in @($rm.Samples)) { Send-OzRainmeterBang $rm '!DeactivateConfig' @($c) } }
+    Save-OzThemeSettings $Cfg
+    Write-OzLog (T 'Theme applied.') 'OK'
+}
+
+function Remove-OzTheme {
+    # Unloads every OZZYHN skin and deletes the OZZYHN skins folder (links inside are never followed)
+    $rm = Get-OzRainmeter
+    if (-not $rm.Installed) { return }
+    $root = Join-Path $rm.SkinPath 'OZZYHN'
+    if ($rm.Running) {
+        foreach ($c in @($rm.Active.Keys)) { Send-OzRainmeterBang $rm '!DeactivateConfig' @($c) }
+        Start-Sleep -Milliseconds 800
+    } elseif ($rm.Active.Count -and [IO.File]::Exists($rm.Ini) -and (Test-OzNoLinkPath $rm.Ini)) {
+        # Rainmeter is closed: mark the OZZYHN skins as not loaded, so it does not look for them next time
+        $lines = [IO.File]::ReadAllLines($rm.Ini)
+        $section = ''
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match '^\s*\[(.+)\]\s*$') { $section = $Matches[1]; continue }
+            if ($section -like 'OZZYHN\*' -and $lines[$i] -match '^\s*Active\s*=') { $lines[$i] = 'Active=0' }
+        }
+        [IO.File]::WriteAllLines($rm.Ini, $lines, [Text.Encoding]::Unicode)
+    }
+    if ([IO.Directory]::Exists($root)) {
+        if (-not (Test-OzNoLinkPath $root)) { throw "$root is a link, so it was not deleted." }
+        [void](Clear-OzFolder -Path $root)
+        try { [IO.Directory]::Delete($root, $false) } catch { }
+    }
+    if ($rm.Running) { Send-OzRainmeterBang $rm '!RefreshApp' }
+    Write-OzLog (T 'Theme removed. Your wallpaper and your own Rainmeter skins were not touched.') 'OK'
+}
+
+function New-OzWallpaperArt {
+    # Draws the OZZYHN wallpaper set (original art made here, nothing downloaded) as JPG files.
+    # Only files named ozzyhn-*.jpg are ever written. Returns the paths.
+    param([string]$Folder, [int]$Width = 2560, [int]$Height = 1440)
+    if (-not (Test-OzNoLinkPath $Folder)) { throw "A folder on the way to $Folder is a link, so no wallpapers were written there." }
+    if (-not [IO.Directory]::Exists($Folder)) { [void][IO.Directory]::CreateDirectory($Folder) }
+    Add-Type -AssemblyName System.Drawing
+    $W = $Width; $H = $Height
+    $col = { param([string]$hex, [int]$a = 255) $c = [System.Drawing.ColorTranslator]::FromHtml($hex); [System.Drawing.Color]::FromArgb($a, $c.R, $c.G, $c.B) }
+    $vgrad = {
+        param($g, [single]$y0, [single]$y1, $c0, $c1, $rect)
+        $b = New-Object System.Drawing.Drawing2D.LinearGradientBrush((New-Object System.Drawing.PointF(0, $y0)), (New-Object System.Drawing.PointF(0, $y1)), $c0, $c1)
+        $b.WrapMode = [System.Drawing.Drawing2D.WrapMode]::TileFlipXY
+        $g.FillRectangle($b, $rect); $b.Dispose()
+    }
+    $wavePath = {
+        # A soft hill line across the screen, closed down to the bottom
+        param([double]$base, [double]$amp, [double]$f1, [double]$p1, [double]$f2, [double]$p2, [double]$dy)
+        $pts = New-Object System.Collections.Generic.List[System.Drawing.PointF]
+        for ($x = -20; $x -le $W + 20; $x += 10) {
+            $t = $x / $W
+            $y = $base + $dy + $amp * [math]::Sin(2 * [math]::PI * ($t * $f1 + $p1)) + 0.45 * $amp * [math]::Sin(2 * [math]::PI * ($t * $f2 + $p2))
+            $pts.Add((New-Object System.Drawing.PointF([single]$x, [single]$y)))
+        }
+        $pts.Add((New-Object System.Drawing.PointF([single]($W + 20), [single]($H + 20))))
+        $pts.Add((New-Object System.Drawing.PointF(-20, [single]($H + 20))))
+        $p = New-Object System.Drawing.Drawing2D.GraphicsPath
+        $p.AddLines($pts.ToArray()); $p.CloseFigure()
+        $p
+    }
+    $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() | Where-Object { $_.MimeType -eq 'image/jpeg' } | Select-Object -First 1
+    $ep = New-Object System.Drawing.Imaging.EncoderParameters 1
+    $ep.Param[0] = New-Object System.Drawing.Imaging.EncoderParameter ([System.Drawing.Imaging.Encoder]::Quality, [int64]95)
+    $made = @()
+    $designs = 'dunes-light', 'dunes-night', 'neon-horizon', 'crimson-slash', 'arctic-ridges', 'hex-field'
+    foreach ($name in $designs) {
+        $bmp = New-Object System.Drawing.Bitmap $W, $H
+        $g = [System.Drawing.Graphics]::FromImage($bmp)
+        $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+        $all = New-Object System.Drawing.Rectangle 0, 0, $W, $H
+        $rnd = New-Object System.Random ($name.Length * 7919)
+        try {
+            switch ($name) {
+                { $_ -in 'dunes-light', 'dunes-night' } {
+                    $night = $name -eq 'dunes-night'
+                    if ($night) { & $vgrad $g 0 $H (& $col '#1B1C20') (& $col '#08080A') $all }
+                    else { & $vgrad $g 0 $H (& $col '#F4F4F4') (& $col '#C9C9C9') $all }
+                    for ($k = 0; $k -lt 7; $k++) {
+                        $base = $H * (0.40 + $k * 0.085); $amp = $H * (0.035 + 0.01 * $k)
+                        $f1 = 0.8 + $rnd.NextDouble() * 0.9; $p1 = $rnd.NextDouble(); $f2 = 1.6 + $rnd.NextDouble() * 1.4; $p2 = $rnd.NextDouble()
+                        # soft shadow cast on the hill behind
+                        foreach ($s in @(@(26, 10), @(16, 22), @(9, 40))) {
+                            $sp = & $wavePath $base $amp $f1 $p1 $f2 $p2 (-$s[1])
+                            $sb = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb($(if ($night) { [int]($s[0] * 1.6) } else { $s[0] }), 0, 0, 0))
+                            $g.FillPath($sb, $sp); $sb.Dispose(); $sp.Dispose()
+                        }
+                        $path = & $wavePath $base $amp $f1 $p1 $f2 $p2 0
+                        $top = [single]($base - $amp * 1.5); $bot = [single]($base + $amp * 2.5)
+                        if ($night) { $c0 = & $col '#34353B'; $c1 = & $col '#0B0B0D' } else { $c0 = & $col '#FBFBFB'; $c1 = & $col '#A9A9A9' }
+                        $br = New-Object System.Drawing.Drawing2D.LinearGradientBrush((New-Object System.Drawing.PointF(0, $top)), (New-Object System.Drawing.PointF(0, $bot)), $c0, $c1)
+                        $br.WrapMode = [System.Drawing.Drawing2D.WrapMode]::TileFlipXY
+                        $g.FillPath($br, $path); $br.Dispose()
+                        $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb($(if ($night) { 40 } else { 120 }), 255, 255, 255)), 2
+                        $g.DrawPath($pen, $path); $pen.Dispose(); $path.Dispose()
+                    }
+                }
+                'neon-horizon' {
+                    & $vgrad $g 0 ($H * 0.62) (& $col '#05070D') (& $col '#1A0626') $all
+                    $hy = [single]($H * 0.62)
+                    $r = [single]($H * 0.24); $cx = [single]($W / 2); $cy = [single]($hy - $r * 0.35)
+                    $sun = New-Object System.Drawing.Drawing2D.LinearGradientBrush((New-Object System.Drawing.PointF(0, ($cy - $r))), (New-Object System.Drawing.PointF(0, $hy)), (& $col '#FF2BD6'), (& $col '#FFB020'))
+                    $g.SetClip((New-Object System.Drawing.RectangleF(0, 0, $W, $hy)))
+                    $g.FillEllipse($sun, $cx - $r, $cy - $r, 2 * $r, 2 * $r); $sun.Dispose()
+                    $bg = New-Object System.Drawing.SolidBrush (& $col '#14051F')
+                    for ($i = 0; $i -lt 7; $i++) {
+                        $yy = $cy + $r * (0.05 + $i * 0.13); $hh = 3 + $i * 3
+                        $g.FillRectangle($bg, $cx - $r, [single]$yy, 2 * $r, [single]$hh)
+                    }
+                    $bg.Dispose(); $g.ResetClip()
+                    $floor = New-Object System.Drawing.Rectangle 0, ([int]$hy), $W, ($H - [int]$hy)
+                    & $vgrad $g $hy $H (& $col '#0A0214') (& $col '#05070D') $floor
+                    foreach ($pass in @(@(60, 7), @(220, 2))) {
+                        $pen = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb($pass[0], 0, 229, 255)), $pass[1]
+                        for ($i = 1; $i -le 14; $i++) { $t = [math]::Pow($i / 14, 2.2); $y = [single]($hy + ($H - $hy) * $t); $g.DrawLine($pen, 0, $y, $W, $y) }
+                        for ($i = -16; $i -le 16; $i++) { $g.DrawLine($pen, $cx, $hy, [single]($cx + $i * $W / 9), [single]$H) }
+                        $pen.Dispose()
+                    }
+                    $hz = New-Object System.Drawing.Pen ((& $col '#FF2BD6' 230)), 3
+                    $g.DrawLine($hz, 0, $hy, $W, $hy); $hz.Dispose()
+                }
+                'crimson-slash' {
+                    & $vgrad $g 0 $H (& $col '#17171A') (& $col '#0A0A0B') $all
+                    $band = New-Object System.Drawing.Drawing2D.GraphicsPath
+                    $band.AddPolygon([System.Drawing.PointF[]]@((New-Object System.Drawing.PointF([single]($W * 0.56), 0)), (New-Object System.Drawing.PointF([single]($W * 0.74), 0)), (New-Object System.Drawing.PointF([single]($W * 0.46), [single]$H)), (New-Object System.Drawing.PointF([single]($W * 0.28), [single]$H))))
+                    $rb = New-Object System.Drawing.Drawing2D.LinearGradientBrush((New-Object System.Drawing.PointF(0, 0)), (New-Object System.Drawing.PointF([single]$W, [single]$H)), (& $col '#FF3B50'), (& $col '#5E0612'))
+                    $g.FillPath($rb, $band); $rb.Dispose(); $band.Dispose()
+                    $pen = New-Object System.Drawing.Pen ((& $col '#FFFFFF' 200)), 2
+                    $g.DrawLine($pen, [single]($W * 0.79), 0, [single]($W * 0.51), [single]$H); $pen.Dispose()
+                    $pen = New-Object System.Drawing.Pen ((& $col '#FF3B50' 160)), 6
+                    $g.DrawLine($pen, [single]($W * 0.22), 0, [single]($W * 0.06), [single]($H * 0.58)); $pen.Dispose()
+                }
+                'arctic-ridges' {
+                    & $vgrad $g 0 ($H * 0.7) (& $col '#E4EEF6') (& $col '#93ABC2') $all
+                    $layers = '#B6C8D8', '#8EA6BD', '#667F98', '#3D536B', '#1C2A3A', '#0C141E'
+                    for ($k = 0; $k -lt $layers.Count; $k++) {
+                        $n = 129; $ys = New-Object double[] $n
+                        $ys[0] = 0; $ys[$n - 1] = 0
+                        $step = $n - 1; $rough = $H * (0.16 - $k * 0.012)
+                        while ($step -gt 1) {
+                            $half = [int]($step / 2)
+                            for ($i = $half; $i -lt $n; $i += $step) { $ys[$i] = ($ys[$i - $half] + $ys[[math]::Min($n - 1, $i + $half)]) / 2 + ($rnd.NextDouble() - 0.5) * $rough }
+                            $rough *= 0.55; $step = $half
+                        }
+                        $base = $H * (0.45 + $k * 0.085)
+                        $pts = New-Object System.Collections.Generic.List[System.Drawing.PointF]
+                        for ($i = 0; $i -lt $n; $i++) { $pts.Add((New-Object System.Drawing.PointF([single]($i * $W / ($n - 1)), [single]($base + $ys[$i] - [math]::Abs($ys[$i]) * 0.6)))) }
+                        $pts.Add((New-Object System.Drawing.PointF([single]$W, [single]$H))); $pts.Add((New-Object System.Drawing.PointF(0, [single]$H)))
+                        $sb = New-Object System.Drawing.SolidBrush (& $col $layers[$k])
+                        $g.FillPolygon($sb, $pts.ToArray()); $sb.Dispose()
+                        if ($k -lt $layers.Count - 1) {
+                            $mist = New-Object System.Drawing.Rectangle 0, ([int]($base - $H * 0.05)), $W, ([int]($H * 0.18))
+                            $mb = New-Object System.Drawing.Drawing2D.LinearGradientBrush((New-Object System.Drawing.PointF(0, [single]$mist.Top)), (New-Object System.Drawing.PointF(0, [single]$mist.Bottom)), ([System.Drawing.Color]::FromArgb(0, 230, 240, 248)), ([System.Drawing.Color]::FromArgb(70, 230, 240, 248)))
+                            $g.FillRectangle($mb, $mist); $mb.Dispose()
+                        }
+                    }
+                }
+                'hex-field' {
+                    & $vgrad $g 0 $H (& $col '#0D1015') (& $col '#06070A') $all
+                    $r = 58.0; $hw = [math]::Sqrt(3) * $r
+                    $edge = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(255, 5, 6, 8)), 5
+                    $shine = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(22, 255, 255, 255)), 1.5
+                    for ($row = -1; $row * 1.5 * $r -lt $H + $r; $row++) {
+                        for ($c = -1; $c * $hw -lt $W + $hw; $c++) {
+                            $x = $c * $hw + $(if ($row % 2) { $hw / 2 } else { 0 }); $y = $row * 1.5 * $r
+                            $pts = [System.Drawing.PointF[]]@(0..5 | ForEach-Object { $a = [math]::PI / 180 * (60 * $_ - 30); New-Object System.Drawing.PointF([single]($x + $r * [math]::Cos($a)), [single]($y + $r * [math]::Sin($a))) })
+                            $lift = $rnd.Next(0, 18)
+                            $accent = $rnd.NextDouble() -lt 0.025
+                            $c0 = if ($accent) { & $col '#00E5FF' 90 } else { [System.Drawing.Color]::FromArgb(255, 28 + $lift, 31 + $lift, 38 + $lift) }
+                            $c1 = if ($accent) { & $col '#0B2730' } else { [System.Drawing.Color]::FromArgb(255, 12, 14, 18) }
+                            $hb = New-Object System.Drawing.Drawing2D.LinearGradientBrush((New-Object System.Drawing.PointF([single]($x - $r), [single]($y - $r))), (New-Object System.Drawing.PointF([single]($x + $r), [single]($y + $r))), $c0, $c1)
+                            $g.FillPolygon($hb, $pts); $hb.Dispose()
+                            $g.DrawPolygon($edge, $pts)
+                            $g.DrawLine($shine, $pts[3], $pts[4]); $g.DrawLine($shine, $pts[4], $pts[5])
+                        }
+                    }
+                    $edge.Dispose(); $shine.Dispose()
+                }
+            }
+            $out = Join-Path $Folder ("ozzyhn-$name.jpg")
+            if ([IO.File]::Exists($out) -and -not (Test-OzNoLinkPath $out)) { throw "$out is a link." }
+            $bmp.Save($out, $codec, $ep)
+            $made += $out
+        } finally { $g.Dispose(); $bmp.Dispose() }
+    }
+    $made
 }
 #endregion
 
@@ -4828,9 +7298,6 @@ M&Aacute;XIMO RENDIMIENTO m&aacute;s mouse sin aceleraci&oacute;n, sin avisos de
 All privacy, telemetry and AI switches, no cloud search, app permissions locked down, no sync, no ads anywhere. Camera and microphone are left for you to decide.
 Todos los interruptores de privacidad, telemetr&iacute;a e IA, sin b&uacute;squeda en la nube, permisos de apps cerrados, sin sincronizaci&oacute;n y sin anuncios. La c&aacute;mara y el micr&oacute;fono quedan a tu elecci&oacute;n.
 
-Classic right-click menu, no widgets or chat icon, clean Start, no tips or ads, End Task on the taskbar, file extensions visible.
-Men&uacute; contextual cl&aacute;sico, sin widgets ni &iacute;cono de chat, Inicio limpio, sin consejos ni anuncios, Finalizar tarea en la barra y extensiones de archivo visibles.
-
 Microsoft News
 Microsoft Noticias
 
@@ -5578,6 +8045,642 @@ REINICIAR AHORA
 LATER
 M&Aacute;S TARDE
 
+
+INSTALLED APPS
+APPS INSTALADAS
+
+No suggested actions when copying
+Sin acciones sugeridas al copiar
+
+Copying a date, time or phone number no longer pops up suggestions to make a call or add a calendar event.
+Copiar una fecha, una hora o un n&uacute;mero de tel&eacute;fono ya no muestra sugerencias para llamar o crear un evento.
+
+No telemetry from PowerShell 7 and .NET tools
+Sin telemetr&iacute;a de PowerShell 7 ni de las herramientas .NET
+
+Sets the official opt-out switches, so PowerShell 7 and the .NET SDK stop sending usage data. Windows PowerShell is not affected.
+Activa las opciones oficiales de exclusi&oacute;n para que PowerShell 7 y el SDK de .NET dejen de enviar datos de uso. Windows PowerShell no cambia.
+
+Applies to programs started after the change.
+Se aplica a los programas que se abran despu&eacute;s del cambio.
+
+Disable AI in Paint
+Desactivar la IA en Paint
+
+Turns off Cocreator, Image Creator and generative fill in Paint (Pro and up honor this policy).
+Apaga Cocreator, Image Creator y el relleno generativo de Paint (Pro y superiores respetan esta directiva).
+
+Disable AI in Notepad
+Desactivar la IA en el Bloc de notas
+
+Removes Copilot, Rewrite and Summarize from Notepad. The editor itself is unchanged.
+Quita Copilot, Reescribir y Resumir del Bloc de notas. El editor sigue igual.
+
+Block apps from Windows generative AI
+Impedir que las apps usen la IA generativa de Windows
+
+Apps can no longer use the text and image generation built into Windows (Settings > Privacy > Text and image generation).
+Las apps ya no pueden usar la generaci&oacute;n de texto e im&aacute;genes integrada en Windows (Configuraci&oacute;n > Privacidad > Generaci&oacute;n de texto e im&aacute;genes).
+
+Edge: no on-device AI model
+Edge: sin modelo de IA local
+
+Edge stops downloading its local AI model and deletes it if it is already there. Frees disk space.
+Edge deja de descargar su modelo de IA local y lo borra si ya est&aacute; descargado. Libera espacio en disco.
+
+Fastest key repeat
+Repetici&oacute;n de teclas m&aacute;s r&aacute;pida
+
+A held key starts repeating after the shortest delay, at the fastest rate.
+Una tecla mantenida empieza a repetirse con el menor retraso y a la mayor velocidad.
+
+Xbox button does not open Game Bar
+El bot&oacute;n Xbox no abre la Game Bar
+
+Pressing the Xbox button on a controller no longer pops Game Bar over your game. Win+G still opens it.
+Pulsar el bot&oacute;n Xbox del mando ya no abre la Game Bar encima del juego. Win+G la sigue abriendo.
+
+No network while asleep on battery
+Sin red durante la suspensi&oacute;n con bater&iacute;a
+
+Modern Standby laptops stop syncing mail and downloading updates while asleep on battery: less drain and heat in a bag.
+Las port&aacute;tiles con Modern Standby dejan de sincronizar correo y descargar actualizaciones mientras duermen con bater&iacute;a: menos consumo y menos calor en la mochila.
+
+Show hidden CPU power settings
+Mostrar ajustes ocultos de energ&iacute;a de la CPU
+
+Adds "Processor performance boost mode" and core parking to Power Options > Advanced settings, so you can tune them yourself.
+A&ntilde;ade "Modo de aumento de rendimiento del procesador" y el estacionamiento de n&uacute;cleos a Opciones de energ&iacute;a > Configuraci&oacute;n avanzada, para que los ajustes t&uacute; mismo.
+
+Bluetooth services OFF
+Servicios de Bluetooth APAGADOS
+
+Only shown when this PC has no Bluetooth radio, so nothing here can use them.
+Solo aparece cuando esta PC no tiene Bluetooth, as&iacute; que nada puede usarlos.
+
+Turn this back off before you plug in a Bluetooth adapter.
+Desact&iacute;valo antes de conectar un adaptador Bluetooth.
+
+Fingerprint / face sign-in service OFF
+Servicio de inicio con huella o rostro APAGADO
+
+Only shown when this PC has no fingerprint reader or Windows Hello camera.
+Solo aparece cuando esta PC no tiene lector de huellas ni c&aacute;mara de Windows Hello.
+
+Turn this back off before you add a fingerprint reader or face camera.
+Desact&iacute;valo antes de a&ntilde;adir un lector de huellas o una c&aacute;mara de reconocimiento facial.
+
+Mobile hotspot service OFF
+Servicio de zona m&oacute;vil APAGADO
+
+Only needed to share this PC's internet with other devices.
+Solo hace falta para compartir el internet de esta PC con otros dispositivos.
+
+Prefer IPv4 over IPv6
+Preferir IPv4 sobre IPv6
+
+Windows tries IPv4 first. Fixes slow first connections on networks with broken IPv6, while IPv6 keeps working.
+Windows prueba IPv4 primero. Arregla las conexiones lentas en redes con IPv6 roto, y IPv6 sigue funcionando.
+
+Microsoft recommends keeping IPv6 on. This only changes which one is tried first.
+Microsoft recomienda dejar IPv6 activado. Esto solo cambia cu&aacute;l se prueba primero.
+
+Disable interrupt moderation (wired)
+Desactivar la moderaci&oacute;n de interrupciones (cable)
+
+The network card reports every packet right away instead of batching them. Can lower ping jitter in games, costs a little CPU.
+La tarjeta de red avisa de cada paquete al instante en lugar de agruparlos. Puede reducir la variaci&oacute;n del ping en juegos y usa un poco m&aacute;s de CPU.
+
+The adapter briefly reconnects. Turn this back off if downloads get slower.
+El adaptador se reconecta un momento. Desact&iacute;valo si las descargas se vuelven m&aacute;s lentas.
+
+Hide Home from Explorer
+Ocultar Inicio del Explorador
+
+Removes the Home entry at the top of the navigation pane.
+Quita la entrada Inicio de la parte superior del panel de navegaci&oacute;n.
+
+No duplicate USB drives in Explorer
+Sin unidades USB duplicadas en el Explorador
+
+USB sticks and SD cards show once under This PC instead of twice in the navigation pane.
+Las memorias USB y tarjetas SD aparecen una vez dentro de Este equipo en lugar de dos veces en el panel de navegaci&oacute;n.
+
+Right-click menu: no Give access, Share or Cast
+Men&uacute; contextual: sin Conceder acceso, Compartir ni Transmitir
+
+Removes "Give access to", "Share" and "Cast to device" from the right-click menu.
+Quita "Conceder acceso a", "Compartir" y "Transmitir a dispositivo" del men&uacute; contextual.
+
+Right-click menu: no app shortcuts
+Men&uacute; contextual: sin atajos de apps
+
+Removes "Ask Copilot", "Edit with Clipchamp", "Edit with Photos", "Edit with Paint" and "Edit in Notepad". Open with still works.
+Quita "Preguntar a Copilot", "Editar con Clipchamp", "Editar con Fotos", "Editar con Paint" y "Editar en Bloc de notas". Abrir con sigue funcionando.
+
+No "Look for an app in the Store"
+Sin "Buscar una app en Microsoft Store"
+
+Opening an unknown file type shows your installed apps instead of sending you to the Microsoft Store.
+Abrir un tipo de archivo desconocido muestra tus apps instaladas en lugar de mandarte a Microsoft Store.
+
+Hide the "Learn about this picture" icon
+Ocultar el &iacute;cono "M&aacute;s informaci&oacute;n sobre esta imagen"
+
+Removes the Windows Spotlight icon from the desktop. Spotlight wallpapers keep changing.
+Quita el &iacute;cono de Windows Spotlight del escritorio. Los fondos de Spotlight siguen cambiando.
+
+No window shake to minimize
+Sin agitar ventanas para minimizar
+
+Shaking a window by its title bar no longer minimizes every other window.
+Agitar una ventana por su barra de t&iacute;tulo ya no minimiza todas las dem&aacute;s.
+
+Compact Explorer view
+Vista compacta del Explorador
+
+Less space between files, so more fit on screen (the Windows 10 spacing).
+Menos espacio entre archivos para que quepan m&aacute;s en pantalla (el espaciado de Windows 10).
+
+Sharp sign-in screen background
+Fondo n&iacute;tido en la pantalla de inicio de sesi&oacute;n
+
+The sign-in screen shows your lock-screen picture without the blur.
+La pantalla de inicio de sesi&oacute;n muestra tu imagen de bloqueo sin desenfoque.
+
+Full-quality wallpaper
+Fondo de pantalla a calidad completa
+
+Windows stops recompressing your wallpaper to 85% JPEG quality, so gradients and dark scenes stay smooth.
+Windows deja de recomprimir tu fondo al 85% de calidad JPEG, as&iacute; los degradados y las escenas oscuras se ven suaves.
+
+Set your wallpaper again to see the difference.
+Vuelve a poner tu fondo de pantalla para ver la diferencia.
+
+Detailed file copy window
+Ventana de copia con detalles
+
+Copy and move windows open with the speed graph and details already shown.
+Las ventanas de copiar y mover se abren con el gr&aacute;fico de velocidad y los detalles visibles.
+
+Never combine taskbar buttons
+No combinar nunca los botones de la barra de tareas
+
+Every window gets its own taskbar button with its title, on every monitor.
+Cada ventana tiene su propio bot&oacute;n con su t&iacute;tulo en la barra de tareas, en todos los monitores.
+
+No search history on this device
+Sin historial de b&uacute;squeda en este dispositivo
+
+Windows search stops remembering what you searched for on this PC.
+La b&uacute;squeda de Windows deja de recordar lo que buscaste en esta PC.
+
+Chrome: no background mode or usage reports
+Chrome: sin modo en segundo plano ni informes de uso
+
+Chrome stops running after you close it, stops its cleanup scanner and stops sending usage statistics.
+Chrome deja de ejecutarse al cerrarlo, apaga su esc&aacute;ner de limpieza y deja de enviar estad&iacute;sticas de uso.
+
+Chrome will show "managed by your organization" (normal for policies).
+Chrome mostrar&aacute; "administrado por tu organizaci&oacute;n" (normal con directivas).
+
+Firefox: no telemetry or studies
+Firefox: sin telemetr&iacute;a ni estudios
+
+Firefox stops sending telemetry, stops installing studies and stops its default-browser agent task.
+Firefox deja de enviar telemetr&iacute;a, de instalar estudios y de ejecutar su tarea de navegador predeterminado.
+
+Office: minimum diagnostic data
+Office: datos de diagn&oacute;stico m&iacute;nimos
+
+Word, Excel, Outlook and the other Office apps send no optional diagnostic data.
+Word, Excel, Outlook y las dem&aacute;s apps de Office no env&iacute;an datos de diagn&oacute;stico opcionales.
+
+Stay on your current Windows version
+Quedarse en tu versi&oacute;n actual de Windows
+
+Windows Update keeps sending security fixes for the version you have now, but does not upgrade you to the next yearly version (Pro / Enterprise).
+Windows Update sigue enviando parches de seguridad para tu versi&oacute;n actual, pero no te actualiza a la siguiente versi&oacute;n anual (Pro / Enterprise).
+
+Turn this off before your version stops getting security updates.
+Desact&iacute;valo antes de que tu versi&oacute;n deje de recibir actualizaciones de seguridad.
+
+Delay monthly updates 7 days
+Retrasar las actualizaciones mensuales 7 d&iacute;as
+
+Monthly fixes arrive a week later, after early problems are found and pulled (Pro / Enterprise).
+Los parches mensuales llegan una semana despu&eacute;s, cuando ya se detectaron y retiraron los primeros fallos (Pro / Enterprise).
+
+Free the space Windows reserves for updates
+Liberar el espacio que Windows reserva para actualizaciones
+
+Gives back the 5-7 GB that Windows keeps aside for updates. Worth it on 64-128 GB drives.
+Recupera los 5-7 GB que Windows aparta para actualizaciones. Vale la pena en discos de 64-128 GB.
+
+Updates then need that much free space while they install. Windows cannot change this while an update is waiting.
+Las actualizaciones necesitar&aacute;n ese espacio libre mientras se instalan. Windows no puede cambiar esto si hay una actualizaci&oacute;n pendiente.
+
+Block potentially unwanted apps
+Bloquear aplicaciones potencialmente no deseadas
+
+Defender blocks adware, bundled toolbars, browser hijackers and hidden crypto miners.
+Defender bloquea adware, barras de herramientas incluidas, secuestradores del navegador y mineros de criptomonedas ocultos.
+
+Only works while Microsoft Defender is your antivirus.
+Solo funciona mientras Microsoft Defender sea tu antivirus.
+
+Disable proxy auto-discovery (WPAD)
+Desactivar la detecci&oacute;n autom&aacute;tica de proxy (WPAD)
+
+Stops Windows from asking the network for a proxy, a trick used to intercept traffic on public Wi-Fi.
+Windows deja de pedirle un proxy a la red, un truco usado para interceptar el tr&aacute;fico en Wi-Fi p&uacute;blicas.
+
+Company networks that hand out their proxy automatically need this on.
+Las redes de empresa que reparten su proxy autom&aacute;ticamente lo necesitan activado.
+
+Disable AutoPlay
+Desactivar la reproducci&oacute;n autom&aacute;tica
+
+Plugging in a USB drive, phone or disc no longer pops up an action or opens an app by itself.
+Conectar una memoria USB, un tel&eacute;fono o un disco ya no muestra una acci&oacute;n ni abre una app por s&iacute; solo.
+
+LSA protection ON
+Protecci&oacute;n LSA ACTIVADA
+
+Runs the Windows sign-in process as protected, so password-stealing tools cannot read its memory. Can be turned off again.
+Ejecuta el proceso de inicio de sesi&oacute;n de Windows como protegido, as&iacute; las herramientas que roban contrase&ntilde;as no pueden leer su memoria. Se puede volver a desactivar.
+
+Some old smart-card readers or password plug-ins may stop loading.
+Algunos lectores de tarjetas inteligentes o complementos de contrase&ntilde;as antiguos pueden dejar de cargar.
+
+Block Remote Desktop connections
+Bloquear las conexiones de Escritorio remoto
+
+Makes sure nobody can sign in to this PC with Remote Desktop. Quick Assist and remote tools you start yourself still work.
+Asegura que nadie pueda entrar a esta PC con Escritorio remoto. Asistencia r&aacute;pida y las herramientas remotas que abras t&uacute; siguen funcionando.
+
+Disable Windows Script Host
+Desactivar Windows Script Host
+
+Blocks .vbs and .js script files, a common way malware arrives in e-mail attachments and downloads.
+Bloquea los scripts .vbs y .js, una v&iacute;a com&uacute;n de malware en adjuntos de correo y descargas.
+
+Some old installers and login scripts use these files.
+Algunos instaladores y scripts de inicio de sesi&oacute;n antiguos usan estos archivos.
+
+Classic right-click menu without app shortcuts, no widgets or chat icon, clean Start, no tips or ads, End Task on the taskbar, file extensions visible.
+Men&uacute; contextual cl&aacute;sico sin atajos de apps, sin widgets ni &iacute;cono de chat, Inicio limpio, sin consejos ni anuncios, Finalizar tarea en la barra y extensiones de archivo visibles.
+
+Themes
+Temas
+
+THEMES
+TEMAS
+
+Desktop themes for Rainmeter: a clock that picks its text color from your wallpaper, a status bar, a dock and a wallpaper picker. Everything is made for this screen and can be removed in one click.
+Temas de escritorio para Rainmeter: un reloj que elige el color del texto seg&uacute;n tu fondo, una barra de estado, un dock y un selector de fondos. Todo se hace para esta pantalla y se quita con un clic.
+
+RAINMETER
+RAINMETER
+
+GET RAINMETER
+OBTENER RAINMETER
+
+Opens rainmeter.net, the official site
+Abre rainmeter.net, el sitio oficial
+
+CHECK AGAIN
+VOLVER A COMPROBAR
+
+LOOK
+ESTILO VISUAL
+
+Colors of the status bar, the dock and the wallpaper picker.
+Colores de la barra de estado, el dock y el selector de fondos.
+
+WIDGETS
+WIDGETS
+
+Your wallpaper with these settings. It updates as you change them.
+Tu fondo con estos ajustes. Se actualiza a medida que los cambias.
+
+CLOCK
+RELOJ
+
+GENERAL
+GENERAL
+
+APPEARANCE
+APARIENCIA
+
+WALLPAPERS
+FONDOS DE PANTALLA
+
+The picker (left button of the status bar) shows the pictures in these folders, sorted by color. CREATE OZZYHN WALLPAPERS draws six original wallpapers for this theme.
+El selector (bot&oacute;n izquierdo de la barra de estado) muestra las im&aacute;genes de estas carpetas, ordenadas por color. CREAR FONDOS OZZYHN dibuja seis fondos originales para este tema.
+
+CREATE OZZYHN WALLPAPERS
+CREAR FONDOS OZZYHN
+
+ADD FOLDER
+AGREGAR CARPETA
+
+OPEN PICKER
+ABRIR SELECTOR
+
+DOCK APPS
+APPS DEL DOCK
+
+Only apps installed on this PC are listed. They open as you, never as administrator.
+Solo aparecen las apps instaladas en esta PC. Se abren con tu usuario, nunca como administrador.
+
+ADD APP
+AGREGAR APP
+
+APPLY THEME
+APLICAR TEMA
+
+REMOVE THEME
+QUITAR TEMA
+
+MONO DARK
+MONO OSCURO
+
+MONO LIGHT
+MONO CLARO
+
+OZZYHN NEON
+NE&Oacute;N OZZYHN
+
+CRIMSON
+CARMES&Iacute;
+
+ARCTIC
+&Aacute;RTICO
+
+running
+en ejecuci&oacute;n
+
+not running (APPLY THEME starts it)
+sin ejecutar (APLICAR TEMA lo inicia)
+
+Rainmeter {0} is installed, {1}. Skins folder: {2}
+Rainmeter {0} est&aacute; instalado, {1}. Carpeta de skins: {2}
+
+Rainmeter is not installed. It is free and open source: press GET RAINMETER, install it from the official site, then press CHECK AGAIN. This app never downloads it for you.
+Rainmeter no est&aacute; instalado. Es gratis y de c&oacute;digo abierto: pulsa OBTENER RAINMETER, inst&aacute;lalo desde el sitio oficial y luego pulsa VOLVER A COMPROBAR. Esta app nunca lo descarga por ti.
+
+Install Rainmeter to apply a theme. You can set everything up now.
+Instala Rainmeter para aplicar un tema. Ya puedes dejarlo todo configurado.
+
+Changes are not on your desktop yet. Press APPLY THEME.
+Los cambios a&uacute;n no est&aacute;n en tu escritorio. Pulsa APLICAR TEMA.
+
+Theme is on your desktop. Right-click the clock for more options.
+El tema est&aacute; en tu escritorio. Haz clic derecho en el reloj para ver m&aacute;s opciones.
+
+Clock
+Reloj
+
+The big clock with the greeting, date and wallpaper-aware color.
+El reloj grande con saludo, fecha y color que se adapta al fondo.
+
+Status bar
+Barra de estado
+
+Date, time, CPU, RAM, network, volume and battery at the top. The left button opens the wallpaper picker.
+Fecha, hora, CPU, RAM, red, volumen y bater&iacute;a arriba. El bot&oacute;n izquierdo abre el selector de fondos.
+
+Keep the bar above windows
+Barra siempre encima de las ventanas
+
+Off: the bar lives on the desktop, under your windows.
+Apagado: la barra vive en el escritorio, debajo de tus ventanas.
+
+Dock
+Dock
+
+Your apps in a floating bar at the bottom. Hover to lift, click to open.
+Tus apps en una barra flotante abajo. Pasa el rat&oacute;n para elevarlas, haz clic para abrirlas.
+
+Hide the Rainmeter sample skins
+Ocultar los skins de ejemplo de Rainmeter
+
+Unloads the illustro skins Rainmeter shows the first time.
+Descarga los skins illustro que Rainmeter muestra la primera vez.
+
+Top left
+Arriba a la izquierda
+
+Top
+Arriba
+
+Top right
+Arriba a la derecha
+
+Left
+Izquierda
+
+Center
+Centro
+
+Right
+Derecha
+
+Bottom left
+Abajo a la izquierda
+
+Bottom
+Abajo
+
+Bottom right
+Abajo a la derecha
+
+Position
+Posici&oacute;n
+
+Where the clock sits on the desktop.
+D&oacute;nde va el reloj en el escritorio.
+
+Horizontal margin
+Margen horizontal
+
+Distance from the left or right edge, in pixels.
+Distancia al borde izquierdo o derecho, en p&iacute;xeles.
+
+Vertical margin
+Margen vertical
+
+Distance from the top or bottom edge, in pixels.
+Distancia al borde superior o inferior, en p&iacute;xeles.
+
+Size
+Tama&ntilde;o
+
+Everything in the theme grows with this. This screen uses {0}% scaling.
+Todo el tema crece con esto. Esta pantalla usa un escalado del {0}%.
+
+24-hour format
+Formato de 24 horas
+
+Use 24-hour time instead of AM/PM.
+Usa la hora de 24 horas en lugar de AM/PM.
+
+Date format
+Formato de fecha
+
+How the date is written.
+C&oacute;mo se escribe la fecha.
+
+The day spelled wide, with the date and time under it.
+El d&iacute;a escrito a lo ancho, con la fecha y la hora debajo.
+
+A greeting and the short day between two lines.
+Un saludo y el d&iacute;a abreviado entre dos l&iacute;neas.
+
+Big hours over minutes, day and date below.
+Horas grandes sobre los minutos, con el d&iacute;a y la fecha debajo.
+
+Neon time in the theme colors with a seconds line.
+Hora ne&oacute;n con los colores del tema y una l&iacute;nea de segundos.
+
+One quiet line.
+Una sola l&iacute;nea discreta.
+
+Style
+Estilo
+
+The look of the clock. Right-click the clock on the desktop to switch styles there too.
+El aspecto del reloj. Tambi&eacute;n puedes cambiarlo con clic derecho sobre el reloj en el escritorio.
+
+Automatic text color
+Color de texto autom&aacute;tico
+
+Reads the wallpaper under the clock and picks the most readable of your three colors. Follows wallpaper changes.
+Lee el fondo debajo del reloj y elige el m&aacute;s legible de tus tres colores. Sigue los cambios de fondo.
+
+BEST CONTRAST
+MEJOR CONTRASTE
+
+BRIGHTNESS LIMITS
+L&Iacute;MITES DE BRILLO
+
+How to choose
+C&oacute;mo elegir
+
+BEST CONTRAST measures which color reads best. BRIGHTNESS LIMITS uses the two limits below.
+MEJOR CONTRASTE mide qu&eacute; color se lee mejor. L&Iacute;MITES DE BRILLO usa los dos l&iacute;mites de abajo.
+
+Area read (%)
+Zona le&iacute;da (%)
+
+Size of the part of the wallpaper read around the clock.
+Tama&ntilde;o de la parte del fondo que se lee alrededor del reloj.
+
+Dark limit
+L&iacute;mite oscuro
+
+Below this brightness the light text color is used.
+Por debajo de este brillo se usa el color de texto claro.
+
+Light limit
+L&iacute;mite claro
+
+Above this brightness the dark text color is used.
+Por encima de este brillo se usa el color de texto oscuro.
+
+DARK
+OSCURO
+
+MID
+MEDIO
+
+LIGHT
+CLARO
+
+Text color
+Color del texto
+
+The clock always uses this color.
+El reloj siempre usa este color.
+
+Dark text
+Texto oscuro
+
+Used on bright wallpapers.
+Se usa sobre fondos claros.
+
+Mid text
+Texto medio
+
+Used on medium wallpapers.
+Se usa sobre fondos de brillo medio.
+
+Light text
+Texto claro
+
+Used on dark wallpapers.
+Se usa sobre fondos oscuros.
+
+No folders yet. Press ADD FOLDER or CREATE OZZYHN WALLPAPERS.
+A&uacute;n no hay carpetas. Pulsa AGREGAR CARPETA o CREAR FONDOS OZZYHN.
+
+REMOVE
+QUITAR
+
+GOOD
+BUENAS
+
+EVENING
+NOCHES
+
+Text color: {0}. Wallpaper brightness under the clock: {1}%.
+Color del texto: {0}. Brillo del fondo debajo del reloj: {1}%.
+
+Text color: {0} (fixed).
+Color del texto: {0} (fijo).
+
+Rainmeter is not installed. Press GET RAINMETER, install it, then try again.
+Rainmeter no est&aacute; instalado. Pulsa OBTENER RAINMETER, inst&aacute;lalo y vuelve a intentarlo.
+
+Rainmeter did not start. Open it from the Start menu, then press APPLY THEME again.
+Rainmeter no se inici&oacute;. &Aacute;brelo desde el men&uacute; Inicio y vuelve a pulsar APLICAR TEMA.
+
+Applying the theme...
+Aplicando el tema...
+
+Theme files written to {0}
+Archivos del tema guardados en {0}
+
+Theme applied.
+Tema aplicado.
+
+Theme failed: {0}
+El tema fall&oacute;: {0}
+
+The theme could not be applied:\n\n{0}
+No se pudo aplicar el tema:\n\n{0}
+
+Remove the OZZYHN theme?\n\nIts skins are unloaded and the OZZYHN skins folder is deleted. Your wallpaper, your pictures and your other Rainmeter skins stay as they are.
+&iquest;Quitar el tema OZZYHN?\n\nSus skins se descargan y se borra la carpeta de skins OZZYHN. Tu fondo, tus im&aacute;genes y tus otros skins de Rainmeter se quedan como est&aacute;n.
+
+Removing the theme...
+Quitando el tema...
+
+Theme removed. Your wallpaper and your own Rainmeter skins were not touched.
+Tema quitado. Tu fondo y tus propios skins de Rainmeter no se tocaron.
+
+Drawing the OZZYHN wallpapers...
+Dibujando los fondos OZZYHN...
+
+{0} wallpapers saved in {1}
+{0} fondos guardados en {1}
+
+Pick a folder with wallpapers (JPG, PNG or BMP).
+Elige una carpeta con fondos de pantalla (JPG, PNG o BMP).
+
+Programs and shortcuts
+Programas y accesos directos
 '@
 #endregion
 
@@ -5795,6 +8898,7 @@ $Oz.Xaml = @'
 
         <!-- Navigation -->
         <Style x:Key="Nav" TargetType="RadioButton">
+            <Setter Property="Height" Value="42"/>
             <Setter Property="Foreground" Value="#8A9BBF"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Margin" Value="0,2"/>
@@ -5802,7 +8906,7 @@ $Oz.Xaml = @'
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="RadioButton">
-                        <Border x:Name="Bd" Background="Transparent" CornerRadius="9" Height="42" Padding="14,0">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="9" Height="{TemplateBinding Height}" Padding="14,0">
                             <Grid>
                                 <Border x:Name="Bar" Width="3" CornerRadius="2" HorizontalAlignment="Left" Margin="-14,10,0,10" Background="{StaticResource NeonGradV}" Visibility="Hidden"/>
                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
@@ -6229,6 +9333,7 @@ $Oz.Xaml = @'
                                     <RadioButton x:Name="NavTweaks" Style="{StaticResource Nav}" Tag="&#xE945;" Content="Tweaks"/>
                                     <RadioButton x:Name="NavProfiles" Style="{StaticResource Nav}" Tag="&#xE734;" Content="Profiles"/>
                                     <RadioButton x:Name="NavGames" Style="{StaticResource Nav}" Tag="&#xE7FC;" Content="Games"/>
+                                    <RadioButton x:Name="NavThemes" Style="{StaticResource Nav}" Tag="&#xE790;" Content="Themes"/>
                                     <RadioButton x:Name="NavDebloat" Style="{StaticResource Nav}" Tag="&#xE74D;" Content="Debloat"/>
                                     <RadioButton x:Name="NavDrivers" Style="{StaticResource Nav}" Tag="&#xE896;" Content="Drivers"/>
                                     <RadioButton x:Name="NavTools" Style="{StaticResource Nav}" Tag="&#xE90F;" Content="Tools"/>
@@ -6455,6 +9560,110 @@ $Oz.Xaml = @'
                                 </WrapPanel>
                                 <TextBlock x:Name="GamesHint" Text="" Style="{StaticResource Body}" Margin="0,0,0,12"/>
                                 <StackPanel x:Name="GamesPanel" Margin="0,0,12,12"/>
+                            </StackPanel>
+                        </ScrollViewer>
+
+                        <!-- ===================== THEMES ===================== -->
+                        <ScrollViewer x:Name="PageThemes" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" Padding="24,20,12,8">
+                            <StackPanel>
+                                <TextBlock Text="OZZYHN TWEAKS  //" Style="{StaticResource Kicker}"/>
+                                <TextBlock Text="THEMES" Style="{StaticResource H1}"/>
+                                <TextBlock Style="{StaticResource Body}" Margin="0,4,0,12" Text="Desktop themes for Rainmeter: a clock that picks its text color from your wallpaper, a status bar, a dock and a wallpaper picker. Everything is made for this screen and can be removed in one click."/>
+                                <Border Style="{StaticResource Card}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Margin="0,0,12,0">
+                                            <TextBlock Text="RAINMETER" Style="{StaticResource H2}"/>
+                                            <TextBlock x:Name="ThemeRmText" Style="{StaticResource Body}" Margin="0,4,0,0" Text=""/>
+                                        </StackPanel>
+                                        <WrapPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <Button x:Name="BtnRmGet" Style="{StaticResource NeonViolet}" Content="GET RAINMETER" Margin="0,0,8,0" ToolTip="Opens rainmeter.net, the official site"/>
+                                            <Button x:Name="BtnRmCheck" Style="{StaticResource Neon}" Content="CHECK AGAIN" Margin="0"/>
+                                        </WrapPanel>
+                                    </Grid>
+                                </Border>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Style="{StaticResource Card}">
+                                        <StackPanel>
+                                            <TextBlock Text="LOOK" Style="{StaticResource H2}"/>
+                                            <TextBlock Style="{StaticResource Body}" Margin="0,4,0,10" Text="Colors of the status bar, the dock and the wallpaper picker."/>
+                                            <StackPanel x:Name="ThemeLookPanel"/>
+                                            <TextBlock Text="WIDGETS" Style="{StaticResource H2}" Margin="0,8,0,8"/>
+                                            <StackPanel x:Name="ThemeWidgetPanel"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Grid.Column="1" Style="{StaticResource Card}" VerticalAlignment="Top">
+                                        <StackPanel>
+                                            <TextBlock Text="PREVIEW" Style="{StaticResource H2}"/>
+                                            <TextBlock Style="{StaticResource Body}" Margin="0,4,0,10" Text="Your wallpaper with these settings. It updates as you change them."/>
+                                            <Border x:Name="ThemePreviewBox" CornerRadius="10" BorderBrush="#2A00E5FF" BorderThickness="1" Background="#0B0D12" Height="214" ClipToBounds="True">
+                                                <Grid>
+                                                    <Image x:Name="ThemePreviewImg" Stretch="UniformToFill"/>
+                                                    <Grid x:Name="ThemePreviewLayer"/>
+                                                </Grid>
+                                            </Border>
+                                            <TextBlock x:Name="ThemePreviewNote" Style="{StaticResource Body}" Margin="0,8,0,0" Text=""/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,10">
+                                            <TextBlock Text="CLOCK" Style="{StaticResource H2}" VerticalAlignment="Center"/>
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                <RadioButton x:Name="ThemeTabGeneral" Style="{StaticResource Chip}" GroupName="themetab" Content="GENERAL" IsChecked="True"/>
+                                                <RadioButton x:Name="ThemeTabLook" Style="{StaticResource Chip}" GroupName="themetab" Content="APPEARANCE"/>
+                                            </StackPanel>
+                                        </Grid>
+                                        <StackPanel x:Name="ThemeClockPanel"/>
+                                    </StackPanel>
+                                </Border>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="*"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Style="{StaticResource Card}">
+                                        <StackPanel>
+                                            <TextBlock Text="WALLPAPERS" Style="{StaticResource H2}"/>
+                                            <TextBlock Style="{StaticResource Body}" Margin="0,4,0,10" Text="The picker (left button of the status bar) shows the pictures in these folders, sorted by color. CREATE OZZYHN WALLPAPERS draws six original wallpapers for this theme."/>
+                                            <StackPanel x:Name="ThemeWallPanel" Margin="0,0,0,6"/>
+                                            <WrapPanel>
+                                                <Button x:Name="BtnWallMake" Style="{StaticResource NeonViolet}" Content="CREATE OZZYHN WALLPAPERS" Margin="0,0,8,8"/>
+                                                <Button x:Name="BtnWallAdd" Style="{StaticResource Neon}" Content="ADD FOLDER" Margin="0,0,8,8"/>
+                                                <Button x:Name="BtnWallOpen" Style="{StaticResource Neon}" Content="OPEN PICKER" Margin="0,0,8,8"/>
+                                            </WrapPanel>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Grid.Column="1" Style="{StaticResource Card}">
+                                        <StackPanel>
+                                            <TextBlock Text="DOCK APPS" Style="{StaticResource H2}"/>
+                                            <TextBlock Style="{StaticResource Body}" Margin="0,4,0,10" Text="Only apps installed on this PC are listed. They open as you, never as administrator."/>
+                                            <WrapPanel x:Name="ThemeDockPanel" Margin="0,0,0,4"/>
+                                            <Button x:Name="BtnDockAdd" Style="{StaticResource Neon}" Content="ADD APP" HorizontalAlignment="Left" Margin="0,4,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+                                </Grid>
+                                <Border Style="{StaticResource Card}">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                        </Grid.ColumnDefinitions>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button x:Name="BtnThemeApply" Style="{StaticResource Primary}" Content="APPLY THEME"/>
+                                            <Button x:Name="BtnThemeRemove" Style="{StaticResource NeonDanger}" Content="REMOVE THEME"/>
+                                        </StackPanel>
+                                        <TextBlock x:Name="ThemeStatus" Grid.Column="1" Style="{StaticResource Body}" VerticalAlignment="Center" Margin="12,0,0,0" Text=""/>
+                                    </Grid>
+                                </Border>
                             </StackPanel>
                         </ScrollViewer>
 
@@ -6820,7 +10029,7 @@ function New-OzColumns {
 
 function Show-OzPage {
     param([string]$Name)
-    foreach ($p in 'Dash', 'Tweaks', 'Profiles', 'Games', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log') {
+    foreach ($p in 'Dash', 'Tweaks', 'Profiles', 'Games', 'Themes', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log') {
         $el = $Oz.UI["Page$p"]
         if ($el) { $el.Visibility = $(if ($p -eq $Name) { 'Visible' } else { 'Collapsed' }) }
     }
@@ -6836,6 +10045,11 @@ function Show-OzPage {
         Invoke-OzSafe 'App scan' { Show-OzBloat (Get-OzInstalledBloat) }
     }
     if ($Name -eq 'Backup') { Update-OzJournalView }
+    if ($Name -eq 'Themes' -and -not $Oz.ThemesShown) {
+        try { Show-OzThemes } catch { Write-OzLog ((T '{0} failed: {1}') -f (T 'Themes'), $_.Exception.Message) 'ERR' }
+    } elseif ($Name -eq 'Themes') {
+        try { Update-OzThemeStatus; Update-OzThemePreview } catch { Write-OzLog ((T '{0} failed: {1}') -f (T 'Themes'), $_.Exception.Message) 'ERR' }
+    }
     if ($Name -eq 'Games' -and -not $Oz.GamesShown -and $Oz.Sys -and -not $Oz.Busy) {
         $Oz.GamesShown = $true
         Invoke-OzSafe 'Game scan' { Show-OzGames (Get-OzGameScan) }
@@ -7044,6 +10258,7 @@ function Set-OzLanguage {
     if ($Oz.DriversShown) { Show-OzDriverRecs; if ($Oz.LastDriverScan) { Show-OzDriverScan $Oz.LastDriverScan -Quiet } }
     if ($Oz.ToolsShown) { Initialize-OzTools }
     if ($Oz.GamesShown) { Show-OzGames (Get-OzGameScan) } else { $ui.GamesHint.Text = T 'The game check starts after the hardware scan.' }
+    if ($Oz.ThemesShown) { try { Show-OzThemes } catch { Write-OzLog ((T '{0} failed: {1}') -f (T 'Themes'), $_.Exception.Message) 'ERR' } }
     Update-OzCleanText
     Update-OzJournalView
     if ($Save) { Save-OzSettings; Write-OzLog (T 'Language: English') 'OK' }
@@ -8666,6 +11881,563 @@ function Update-OzJournalView {
 }
 #endregion
 
+#region ============================ THEMES VIEW ============================
+function Set-OzThemeValue {
+    # Every control on the THEMES page writes through here, then the preview follows
+    param([string]$Key, $Value)
+    $Oz.ThemeCfg[$Key] = $Value
+    $Oz.ThemeDirty = $true
+    if ($Key -in 'AutoInk', 'InkMode') { Show-OzThemeClockPanel }
+    if ($Key -eq 'Look') { Show-OzThemeLooks }
+    Update-OzThemePreview
+    Update-OzThemeButtons
+}
+
+function New-OzThemeRow {
+    # A settings line: title and explanation on the left, the control on the right
+    param([string]$Title, [string]$Sub, $Control)
+    $row = New-OzRowBorder -Margin '0,0,0,6' -Padding '14,9,14,9'
+    $cols = New-OzColumns @('*', 'Auto')
+    $left = New-Object System.Windows.Controls.StackPanel
+    $left.VerticalAlignment = 'Center'
+    [void]$left.Children.Add((New-OzText -Text $Title -Size 13 -Color '#E6F1FF' -Semi))
+    if ($Sub) { [void]$left.Children.Add((New-OzText -Text $Sub -Size 11.5 -Color '#5D6E92' -Wrap -Margin '0,2,12,0')) }
+    Add-OzGridChild $cols $left 0
+    if ($Control) {
+        $Control.VerticalAlignment = 'Center'
+        $Control.HorizontalAlignment = 'Right'
+        Add-OzGridChild $cols $Control 1
+    }
+    $row.Child = $cols
+    $row
+}
+
+function New-OzThemeChips {
+    # One choice out of a few. Items: @{ Value = ...; Label = '...'; Tip = '...'; Swatch = '#hex' }
+    param([string]$Key, [object[]]$Items, [double]$MaxWidth = 0)
+    $p = New-Object System.Windows.Controls.WrapPanel
+    if ($MaxWidth) { $p.MaxWidth = $MaxWidth }
+    $group = 'theme-{0}-{1}' -f $Key, [guid]::NewGuid().ToString('N').Substring(0, 6)
+    foreach ($it in $Items) {
+        $rb = New-Object System.Windows.Controls.RadioButton
+        $rb.Style = $Oz.Window.FindResource('Chip')
+        $rb.GroupName = $group
+        if ($it.Swatch) {
+            $sp = New-Object System.Windows.Controls.StackPanel
+            $sp.Orientation = 'Horizontal'
+            $dot = New-Object System.Windows.Shapes.Ellipse
+            $dot.Width = 12; $dot.Height = 12
+            $dot.Fill = Get-OzBrush $it.Swatch
+            $dot.Stroke = Get-OzBrush $(if ($it.Edge) { $it.Edge } else { '#5D6E92' })
+            $dot.StrokeThickness = 1.5
+            $dot.Margin = New-OzThickness '0,0,7,0'
+            $dot.VerticalAlignment = 'Center'
+            [void]$sp.Children.Add($dot)
+            [void]$sp.Children.Add((New-OzText -Text $it.Label -Size 11.5 -Color '#E6F1FF' -Display -Semi))
+            $rb.Content = $sp
+        } else { $rb.Content = $it.Label }
+        if ($it.Tip) { $rb.ToolTip = $it.Tip }
+        $rb.Tag = @{ Key = $Key; Value = $it.Value }
+        $rb.IsChecked = ([string]$Oz.ThemeCfg[$Key] -eq [string]$it.Value)
+        $rb.Add_Checked({ Set-OzThemeValue $this.Tag.Key $this.Tag.Value })
+        [void]$p.Children.Add($rb)
+    }
+    $p
+}
+
+function New-OzThemeSwitch {
+    param([string]$Key, [switch]$Disabled)
+    $c = New-Object System.Windows.Controls.CheckBox
+    $c.Style = $Oz.Window.FindResource('Switch')
+    $c.IsChecked = [bool]$Oz.ThemeCfg[$Key]
+    $c.Tag = $Key
+    if ($Disabled) { $c.IsEnabled = $false }
+    $c.Add_Checked({ Set-OzThemeValue $this.Tag $true })
+    $c.Add_Unchecked({ Set-OzThemeValue $this.Tag $false })
+    $c
+}
+
+function New-OzThemeStepper {
+    # A number with - and + buttons, like the settings panels this page is modeled on
+    param([string]$Key, [double]$Step, [double]$Min, [double]$Max, [string]$Format = '0', [string]$Unit = '', [switch]$Disabled)
+    $sp = New-Object System.Windows.Controls.StackPanel
+    $sp.Orientation = 'Horizontal'
+    $val = New-OzText -Text ((([double]$Oz.ThemeCfg[$Key]).ToString($Format, $Oz.Inv)) + $Unit) -Size 13 -Color '#E6F1FF' -Display -Semi -Margin '0,0,10,0'
+    $val.MinWidth = 48
+    $val.TextAlignment = 'Right'
+    $val.VerticalAlignment = 'Center'
+    [void]$sp.Children.Add($val)
+    foreach ($d in @(-1, 1)) {
+        $b = New-OzButton -Text $(if ($d -lt 0) { [string][char]0x2212 } else { '+' }) -Style 'Neon' -Margin '0,0,6,0'
+        $b.Padding = New-OzThickness '11,3'
+        $b.Tag = @{ Key = $Key; Delta = $d * $Step; Min = $Min; Max = $Max; Format = $Format; Unit = $Unit; Text = $val }
+        $b.Add_Click({
+                $t = $this.Tag
+                $v = [math]::Round([math]::Min($t.Max, [math]::Max($t.Min, [double]$Oz.ThemeCfg[$t.Key] + $t.Delta)), 2)
+                if ($t.Format -eq '0') { $v = [int]$v }
+                $t.Text.Text = ([double]$v).ToString($t.Format, $Oz.Inv) + $t.Unit
+                Set-OzThemeValue $t.Key $v
+            })
+        if ($Disabled) { $b.IsEnabled = $false }
+        [void]$sp.Children.Add($b)
+    }
+    if ($Disabled) { $sp.Opacity = 0.45 }
+    $sp
+}
+
+function New-OzThemeColor {
+    # A #RRGGBB box with a live swatch
+    param([string]$Key)
+    $sp = New-Object System.Windows.Controls.StackPanel
+    $sp.Orientation = 'Horizontal'
+    $sw = New-Object System.Windows.Controls.Border
+    $sw.Width = 26; $sw.Height = 26
+    $sw.CornerRadius = New-Object System.Windows.CornerRadius(6)
+    $sw.BorderBrush = Get-OzBrush '#3A4C70'
+    $sw.BorderThickness = New-OzThickness '1'
+    $sw.Background = Get-OzBrush ([string]$Oz.ThemeCfg[$Key])
+    $sw.Margin = New-OzThickness '0,0,8,0'
+    [void]$sp.Children.Add($sw)
+    $tb = New-Object System.Windows.Controls.TextBox
+    $tb.Style = $Oz.Window.FindResource('Input')
+    $tb.Padding = New-OzThickness '10,5,10,5'
+    $tb.Width = 96
+    $tb.MaxLength = 7
+    $tb.FontFamily = $Oz.Window.FindResource('Mono')
+    $tb.Text = [string]$Oz.ThemeCfg[$Key]
+    $tb.Tag = @{ Key = $Key; Swatch = $sw }
+    $tb.Add_TextChanged({
+            $t = $this.Text.Trim()
+            if ($t -notmatch '^#?[0-9A-Fa-f]{6}$') { return }
+            if (-not $t.StartsWith('#')) { $t = '#' + $t }
+            $t = $t.ToUpperInvariant()
+            $this.Tag.Swatch.Background = Get-OzBrush $t
+            if ($Oz.ThemeCfg[$this.Tag.Key] -ne $t) { Set-OzThemeValue $this.Tag.Key $t }
+        })
+    [void]$sp.Children.Add($tb)
+    $sp
+}
+
+function Get-OzThemeScaleNow {
+    # This screen's scaling as a percentage (100, 125, 150...)
+    try { return [int][math]::Round([System.Windows.PresentationSource]::FromVisual($Oz.Window).CompositionTarget.TransformToDevice.M11 * 100) } catch { return 100 }
+}
+
+function Update-OzThemeStatus {
+    $rm = Get-OzRainmeter
+    $Oz.Rainmeter = $rm
+    $ui = $Oz.UI
+    if ($rm.Installed) {
+        $state = if ($rm.Running) { T 'running' } else { T 'not running (APPLY THEME starts it)' }
+        $ui.ThemeRmText.Text = T 'Rainmeter {0} is installed, {1}. Skins folder: {2}' $rm.Version $state $rm.SkinPath
+        $ui.ThemeRmText.Foreground = Get-OzBrush '#2BFF9A'
+        $ui.BtnRmGet.Visibility = 'Collapsed'
+    } else {
+        $ui.ThemeRmText.Text = T 'Rainmeter is not installed. It is free and open source: press GET RAINMETER, install it from the official site, then press CHECK AGAIN. This app never downloads it for you.'
+        $ui.ThemeRmText.Foreground = Get-OzBrush '#FFB020'
+        $ui.BtnRmGet.Visibility = 'Visible'
+    }
+    Update-OzThemeButtons
+}
+
+function Update-OzThemeButtons {
+    $ui = $Oz.UI
+    $rm = $Oz.Rainmeter
+    $installed = [bool]($rm -and $rm.Installed)
+    $hasTheme = $installed -and $rm.SkinPath -and [IO.Directory]::Exists((Join-Path $rm.SkinPath 'OZZYHN'))
+    $ui.BtnThemeApply.IsEnabled = $installed
+    $ui.BtnThemeRemove.IsEnabled = $hasTheme
+    $ui.BtnWallOpen.IsEnabled = $hasTheme -and $rm.Running
+    if (-not $installed) { $ui.ThemeStatus.Text = T 'Install Rainmeter to apply a theme. You can set everything up now.' }
+    elseif ($Oz.ThemeDirty) { $ui.ThemeStatus.Text = T 'Changes are not on your desktop yet. Press APPLY THEME.' }
+    elseif ($hasTheme) { $ui.ThemeStatus.Text = T 'Theme is on your desktop. Right-click the clock for more options.' }
+    else { $ui.ThemeStatus.Text = '' }
+}
+
+function Show-OzThemeLooks {
+    $p = $Oz.UI.ThemeLookPanel
+    $p.Children.Clear()
+    $items = foreach ($k in $Oz.ThemeLooks.Keys) { @{ Value = $k; Label = (T $Oz.ThemeLooks[$k].Name); Swatch = $Oz.ThemeLooks[$k].Swatch; Edge = $Oz.ThemeLooks[$k].Edge } }
+    $p.Children.Add((New-OzThemeChips -Key 'Look' -Items $items)) | Out-Null
+}
+
+function Show-OzThemeWidgets {
+    $p = $Oz.UI.ThemeWidgetPanel
+    $p.Children.Clear()
+    [void]$p.Children.Add((New-OzThemeRow (T 'Clock') (T 'The big clock with the greeting, date and wallpaper-aware color.') (New-OzThemeSwitch 'Clock')))
+    [void]$p.Children.Add((New-OzThemeRow (T 'Status bar') (T 'Date, time, CPU, RAM, network, volume and battery at the top. The left button opens the wallpaper picker.') (New-OzThemeSwitch 'Bar')))
+    [void]$p.Children.Add((New-OzThemeRow (T 'Keep the bar above windows') (T 'Off: the bar lives on the desktop, under your windows.') (New-OzThemeSwitch 'BarOnTop')))
+    [void]$p.Children.Add((New-OzThemeRow (T 'Dock') (T 'Your apps in a floating bar at the bottom. Hover to lift, click to open.') (New-OzThemeSwitch 'Dock')))
+    [void]$p.Children.Add((New-OzThemeRow (T 'Hide the Rainmeter sample skins') (T 'Unloads the illustro skins Rainmeter shows the first time.') (New-OzThemeSwitch 'HideSamples')))
+}
+
+function Show-OzThemeClockPanel {
+    $p = $Oz.UI.ThemeClockPanel
+    if (-not $p) { return }
+    $p.Children.Clear()
+    $cfg = $Oz.ThemeCfg
+    if (-not $Oz.UI.ThemeTabLook.IsChecked) {
+        # ---- GENERAL ----
+        $grid = New-Object System.Windows.Controls.Primitives.UniformGrid
+        $grid.Columns = 3; $grid.Rows = 3
+        $names = 'Top left', 'Top', 'Top right', 'Left', 'Center', 'Right', 'Bottom left', 'Bottom', 'Bottom right'
+        $group = 'theme-pos-' + [guid]::NewGuid().ToString('N').Substring(0, 6)
+        for ($i = 0; $i -lt 9; $i++) {
+            $rb = New-Object System.Windows.Controls.RadioButton
+            $rb.Style = $Oz.Window.FindResource('Chip')
+            $rb.GroupName = $group
+            $rb.Content = [string][char]0x25CF
+            $rb.FontSize = 9
+            $rb.Margin = New-OzThickness '0,0,4,4'
+            $rb.ToolTip = T $names[$i]
+            $rb.Tag = @{ Key = 'Pos'; Value = $Oz.ThemePositions[$i] }
+            $rb.IsChecked = ($cfg.Pos -eq $Oz.ThemePositions[$i])
+            $rb.Add_Checked({ Set-OzThemeValue 'Pos' $this.Tag.Value })
+            [void]$grid.Children.Add($rb)
+        }
+        [void]$p.Children.Add((New-OzThemeRow (T 'Position') (T 'Where the clock sits on the desktop.') $grid))
+        [void]$p.Children.Add((New-OzThemeRow (T 'Horizontal margin') (T 'Distance from the left or right edge, in pixels.') (New-OzThemeStepper 'MarginX' 10 0 2000)))
+        [void]$p.Children.Add((New-OzThemeRow (T 'Vertical margin') (T 'Distance from the top or bottom edge, in pixels.') (New-OzThemeStepper 'MarginY' 10 0 2000)))
+        $sizes = foreach ($v in 75, 100, 125, 150, 175, 200) { @{ Value = $v; Label = "$v%" } }
+        [void]$p.Children.Add((New-OzThemeRow (T 'Size') (T 'Everything in the theme grows with this. This screen uses {0}% scaling.' (Get-OzThemeScaleNow)) (New-OzThemeChips -Key 'Scale' -Items $sizes -MaxWidth 260)))
+        [void]$p.Children.Add((New-OzThemeRow (T '24-hour format') (T 'Use 24-hour time instead of AM/PM.') (New-OzThemeSwitch 'Hour24')))
+        $culture = if ($Oz.Lang -eq 'es') { [Globalization.CultureInfo]::GetCultureInfo('es-ES') } else { [Globalization.CultureInfo]::GetCultureInfo('en-US') }
+        $now = Get-Date
+        $dates = for ($i = 0; $i -lt $Oz.ThemeDateFormats.Count; $i++) { @{ Value = $i; Label = $now.ToString($Oz.ThemeDateFormats[$i].Net, $culture).Replace('.', '').ToUpperInvariant() } }
+        [void]$p.Children.Add((New-OzThemeRow (T 'Date format') (T 'How the date is written.') (New-OzThemeChips -Key 'DateFmt' -Items $dates -MaxWidth 300)))
+    } else {
+        # ---- APPEARANCE ----
+        $styles = @(
+            @{ Value = 'Horizon'; Label = 'HORIZON'; Tip = (T 'The day spelled wide, with the date and time under it.') }
+            @{ Value = 'Blade'; Label = 'BLADE'; Tip = (T 'A greeting and the short day between two lines.') }
+            @{ Value = 'Stack'; Label = 'STACK'; Tip = (T 'Big hours over minutes, day and date below.') }
+            @{ Value = 'Pulse'; Label = 'PULSE'; Tip = (T 'Neon time in the theme colors with a seconds line.') }
+            @{ Value = 'Minimal'; Label = 'MINIMAL'; Tip = (T 'One quiet line.') })
+        [void]$p.Children.Add((New-OzThemeRow (T 'Style') (T 'The look of the clock. Right-click the clock on the desktop to switch styles there too.') (New-OzThemeChips -Key 'Style' -Items $styles -MaxWidth 300)))
+        [void]$p.Children.Add((New-OzThemeRow (T 'Automatic text color') (T 'Reads the wallpaper under the clock and picks the most readable of your three colors. Follows wallpaper changes.') (New-OzThemeSwitch 'AutoInk')))
+        if ($cfg.AutoInk) {
+            $modes = @(@{ Value = 'contrast'; Label = (T 'BEST CONTRAST') }, @{ Value = 'threshold'; Label = (T 'BRIGHTNESS LIMITS') })
+            [void]$p.Children.Add((New-OzThemeRow (T 'How to choose') (T 'BEST CONTRAST measures which color reads best. BRIGHTNESS LIMITS uses the two limits below.') (New-OzThemeChips -Key 'InkMode' -Items $modes -MaxWidth 300)))
+            [void]$p.Children.Add((New-OzThemeRow (T 'Area read (%)') (T 'Size of the part of the wallpaper read around the clock.') (New-OzThemeStepper 'InkRegion' 5 5 100)))
+            $lim = $cfg.InkMode -ne 'threshold'
+            [void]$p.Children.Add((New-OzThemeRow (T 'Dark limit') (T 'Below this brightness the light text color is used.') (New-OzThemeStepper 'InkDarkTh' 0.05 0 1 '0.00' -Disabled:$lim)))
+            [void]$p.Children.Add((New-OzThemeRow (T 'Light limit') (T 'Above this brightness the dark text color is used.') (New-OzThemeStepper 'InkLightTh' 0.05 0 1 '0.00' -Disabled:$lim)))
+        } else {
+            $fixed = @(@{ Value = 0; Label = (T 'DARK') }, @{ Value = 1; Label = (T 'MID') }, @{ Value = 2; Label = (T 'LIGHT') })
+            [void]$p.Children.Add((New-OzThemeRow (T 'Text color') (T 'The clock always uses this color.') (New-OzThemeChips -Key 'InkFixed' -Items $fixed)))
+        }
+        [void]$p.Children.Add((New-OzThemeRow (T 'Dark text') (T 'Used on bright wallpapers.') (New-OzThemeColor 'InkDark')))
+        [void]$p.Children.Add((New-OzThemeRow (T 'Mid text') (T 'Used on medium wallpapers.') (New-OzThemeColor 'InkMid')))
+        [void]$p.Children.Add((New-OzThemeRow (T 'Light text') (T 'Used on dark wallpapers.') (New-OzThemeColor 'InkLight')))
+    }
+}
+
+function Show-OzThemeWalls {
+    $p = $Oz.UI.ThemeWallPanel
+    $p.Children.Clear()
+    $folders = @($Oz.ThemeCfg.WallFolders)
+    if (-not $folders.Count) { [void]$p.Children.Add((New-OzText -Text (T 'No folders yet. Press ADD FOLDER or CREATE OZZYHN WALLPAPERS.') -Size 12 -Wrap -Margin '0,0,0,6')) }
+    foreach ($f in $folders) {
+        $row = New-OzRowBorder -Margin '0,0,0,6' -Padding '12,6,8,6'
+        $cols = New-OzColumns @('Auto', '*', 'Auto')
+        Add-OzGridChild $cols (New-OzText -Text ([string][char]0xE8B7) -Size 14 -Color '#00E5FF' -Icon -Margin '0,0,10,0') 0
+        $t = New-OzText -Text $f -Size 12 -Color $(if ([IO.Directory]::Exists($f)) { '#E6F1FF' } else { '#5D6E92' }) -Mono
+        $t.TextTrimming = 'CharacterEllipsis'
+        $t.VerticalAlignment = 'Center'
+        $t.ToolTip = $f
+        Add-OzGridChild $cols $t 1
+        $x = New-OzButton -Text (T 'REMOVE') -Style 'NeonDanger' -Margin '8,0,0,0'
+        $x.Padding = New-OzThickness '10,3'
+        $x.Tag = $f
+        $x.Add_Click({
+                $Oz.ThemeCfg.WallFolders = @(@($Oz.ThemeCfg.WallFolders) | Where-Object { $_ -ne $this.Tag })
+                Show-OzThemeWalls
+                Set-OzThemeValue 'WallFolders' $Oz.ThemeCfg.WallFolders
+            })
+        Add-OzGridChild $cols $x 2
+        $row.Child = $cols
+        [void]$p.Children.Add($row)
+    }
+}
+
+function Show-OzThemeDock {
+    $p = $Oz.UI.ThemeDockPanel
+    $p.Children.Clear()
+    $cat = @(Get-OzDockCatalog)
+    $Oz.ThemeDockCatalog = $cat
+    $chosen = @($Oz.ThemeCfg.DockApps)
+    foreach ($a in $cat) {
+        $c = New-Object System.Windows.Controls.CheckBox
+        $c.Style = $Oz.Window.FindResource('Tick')
+        $c.Content = $a.Name
+        $c.Margin = New-OzThickness '0,0,18,8'
+        $c.IsChecked = $(if ($chosen.Count) { $chosen -contains $a.Id } else { [bool]$a.Default })
+        $c.Tag = $a.Id
+        $c.Add_Click({ Update-OzThemeDockChoice })
+        [void]$p.Children.Add($c)
+    }
+    foreach ($d in @($Oz.ThemeCfg.DockCustom)) {
+        $c = New-Object System.Windows.Controls.CheckBox
+        $c.Style = $Oz.Window.FindResource('Tick')
+        $c.Content = [string]$d.Name
+        $c.ToolTip = [string]$d.Target
+        $c.Margin = New-OzThickness '0,0,18,8'
+        $c.IsChecked = $true
+        $c.Tag = 'custom|' + [string]$d.Target
+        $c.Add_Click({ Update-OzThemeDockChoice })
+        [void]$p.Children.Add($c)
+    }
+}
+
+function Update-OzThemeDockChoice {
+    $ids = @(); $custom = @()
+    foreach ($c in @($Oz.UI.ThemeDockPanel.Children)) {
+        if (-not $c.IsChecked) { continue }
+        $tag = [string]$c.Tag
+        if ($tag.StartsWith('custom|')) {
+            $target = $tag.Substring(7)
+            $custom += @($Oz.ThemeCfg.DockCustom | Where-Object { [string]$_.Target -eq $target })
+        } else { $ids += $tag }
+    }
+    $Oz.ThemeCfg.DockCustom = @($custom)
+    Set-OzThemeValue 'DockApps' @($ids)
+    if (-not $ids.Count -and -not $custom.Count) { $Oz.ThemeCfg.Dock = $false; Show-OzThemeWidgets }
+}
+
+function Update-OzThemePreview {
+    # A small picture of the desktop with these settings: wallpaper, clock, bar and dock
+    $ui = $Oz.UI
+    $layer = $ui.ThemePreviewLayer
+    if (-not $layer -or -not $Oz.ThemeCfg) { return }
+    $cfg = $Oz.ThemeCfg
+    $look = $Oz.ThemeLooks[[string]$cfg.Look]
+    $box = $ui.ThemePreviewBox
+    $pw = if ($box.ActualWidth -gt 40) { $box.ActualWidth - 2 } else { 380 }
+    $box.Height = [math]::Round($pw * 9 / 16) + 2
+
+    # wallpaper picture (read once per file change)
+    $luma = Get-OzWallLuma $cfg
+    $key = '{0}|{1}' -f $luma.File, $(if ($luma.File -and [IO.File]::Exists($luma.File)) { (Get-Item -LiteralPath $luma.File).LastWriteTimeUtc.Ticks } else { 0 })
+    if ($Oz.ThemePreviewKey -ne $key) {
+        $Oz.ThemePreviewKey = $key
+        $ui.ThemePreviewImg.Source = $null
+        if ($luma.File) {
+            try {
+                $bi = New-Object System.Windows.Media.Imaging.BitmapImage
+                $bi.BeginInit()
+                $bi.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+                $bi.DecodePixelWidth = 720
+                $bi.StreamSource = New-Object IO.MemoryStream (, [IO.File]::ReadAllBytes($luma.File))
+                $bi.EndInit()
+                $bi.Freeze()
+                $ui.ThemePreviewImg.Source = $bi
+            } catch { }
+        }
+    }
+    $layer.Children.Clear()
+
+    # screen size in real pixels, which is what Rainmeter uses
+    $dpi = (Get-OzThemeScaleNow) / 100
+    $sw = [math]::Max(800, [System.Windows.SystemParameters]::PrimaryScreenWidth * $dpi)
+    $f = $pw / $sw
+    $s = [double]$cfg.Scale / 100
+    $toHex = { param($rgb) $c = @($rgb -split ',' | ForEach-Object { [int]$_ }); $a = if ($c.Count -ge 4) { $c[3] } else { 255 }; '#{0:X2}{1:X2}{2:X2}{3:X2}' -f $a, $c[0], $c[1], $c[2] }
+    $slot = if ($cfg.AutoInk) { $luma.Slot } else { [int]$cfg.InkFixed }
+    $inkHex = @($cfg.InkDark, $cfg.InkMid, $cfg.InkLight)[$slot]
+    $ink = Get-OzBrush $inkHex
+
+    if ($cfg.Bar) {
+        $bar = New-Object System.Windows.Controls.Grid
+        $bar.VerticalAlignment = 'Top'
+        $bar.Margin = New-OzThickness ('{0},{1},{0},0' -f [math]::Max(2, 12 * $s * $f), [math]::Max(2, 8 * $s * $f))
+        $bar.Height = [math]::Max(5, 28 * $s * $f)
+        foreach ($spec in @(@('Left', 96), @('Center', 230), @('Right', 540))) {
+            $pill = New-Object System.Windows.Controls.Border
+            $pill.HorizontalAlignment = $spec[0]
+            $pill.Width = $spec[1] * $s * $f
+            $pill.CornerRadius = New-Object System.Windows.CornerRadius(14 * $s * $f)
+            $pill.Background = Get-OzBrush (& $toHex $look.PillBg)
+            $pill.BorderBrush = Get-OzBrush (& $toHex $look.PillLine)
+            $pill.BorderThickness = New-OzThickness '0.6'
+            [void]$bar.Children.Add($pill)
+        }
+        [void]$layer.Children.Add($bar)
+    }
+    if ($cfg.Dock) {
+        $n = [math]::Max(1, @(Get-OzDockApps $cfg).Count)
+        $dock = New-Object System.Windows.Controls.Border
+        $dock.VerticalAlignment = 'Bottom'; $dock.HorizontalAlignment = 'Center'
+        $dock.Width = (2 * 12 + $n * 46 + ($n - 1) * 12 + 12 + 1 + 12 + 46) * $s * $f
+        $dock.Height = (46 + 24) * $s * $f
+        $dock.Margin = New-OzThickness ('0,0,0,{0}' -f (12 * $s * $f))
+        $dock.CornerRadius = New-Object System.Windows.CornerRadius(20 * $s * $f)
+        $dock.Background = Get-OzBrush (& $toHex $look.PillBg)
+        $dock.BorderBrush = Get-OzBrush (& $toHex $look.PillLine)
+        $dock.BorderThickness = New-OzThickness '0.6'
+        $icons = New-Object System.Windows.Controls.StackPanel
+        $icons.Orientation = 'Horizontal'; $icons.HorizontalAlignment = 'Center'; $icons.VerticalAlignment = 'Center'
+        for ($i = 0; $i -lt $n + 1; $i++) {
+            $ic = New-Object System.Windows.Controls.Border
+            $ic.Width = 46 * $s * $f; $ic.Height = 46 * $s * $f
+            $ic.Margin = New-OzThickness ('{0},0' -f (6 * $s * $f))
+            $ic.CornerRadius = New-Object System.Windows.CornerRadius(10 * $s * $f)
+            $ic.Background = Get-OzBrush $(if ($i -lt $n) { '#55' + $look.Edge.TrimStart('#') } else { '#22FFFFFF' })
+            [void]$icons.Children.Add($ic)
+        }
+        $dock.Child = $icons
+        [void]$layer.Children.Add($dock)
+    }
+    if ($cfg.Clock) {
+        $i = [array]::IndexOf($Oz.ThemePositions, [string]$cfg.Pos)
+        $col = $i % 3; $row = [math]::Floor($i / 3)
+        $clock = New-Object System.Windows.Controls.StackPanel
+        $clock.HorizontalAlignment = @('Left', 'Center', 'Right')[$col]
+        $clock.VerticalAlignment = @('Top', 'Center', 'Bottom')[$row]
+        $mx = if ($col -eq 1) { 0 } else { $cfg.MarginX * $f }
+        $my = if ($row -eq 1) { 0 } else { $cfg.MarginY * $f }
+        $clock.Margin = New-OzThickness ('{0},{1},{0},{1}' -f $mx, $my)
+        $align = @('Left', 'Center', 'Right')[$col]
+        $culture = if ($Oz.Lang -eq 'es') { [Globalization.CultureInfo]::GetCultureInfo('es-ES') } else { [Globalization.CultureInfo]::GetCultureInfo('en-US') }
+        $now = Get-Date
+        $time = if ($cfg.Hour24) { $now.ToString('HH:mm') } else { $now.ToString('h:mm tt', $culture) }
+        $date = $now.ToString($Oz.ThemeDateFormats[[int]$cfg.DateFmt].Net, $culture).Replace('.', '').ToUpperInvariant()
+        $day = $now.ToString('dddd', $culture).ToUpperInvariant()
+        $spaced = { param($t, [int]$n) ($t.ToCharArray() | ForEach-Object { [string]$_ }) -join ([string][char]0x200A * $n) }
+        $add = {
+            param([string]$Text, [double]$Size, [string]$Font, [string]$Weight, $Brush, [double]$Top = 0)
+            $tb = New-Object System.Windows.Controls.TextBlock
+            $tb.Text = $Text
+            $tb.FontSize = [math]::Max(4, $Size * $s * $f * 1.33)
+            $tb.FontFamily = New-Object System.Windows.Media.FontFamily($Font)
+            $tb.FontWeight = [System.Windows.FontWeights]::$Weight
+            $tb.Foreground = $Brush
+            $tb.TextAlignment = $align
+            $tb.HorizontalAlignment = $align
+            $tb.Margin = New-OzThickness ('0,{0},0,0' -f ($Top * $s * $f))
+            [void]$clock.Children.Add($tb)
+        }
+        $font = 'Bahnschrift, Segoe UI'
+        switch ($cfg.Style) {
+            'Horizon' { & $add (& $spaced $day 2) 80 $font 'Light' $ink; & $add (& $spaced $date 1) 16 $font 'Normal' $ink 2; & $add ('-  ' + $time + '  -') 16 $font 'Normal' $ink 6 }
+            'Blade' {
+                & $add ([string][char]0x2502) 40 $font 'Light' $ink
+                & $add (T 'GOOD') 12 $font 'Bold' $ink 10; & $add (T 'EVENING') 12 $font 'Bold' $ink
+                & $add ($now.ToString('ddd', $culture).Replace('.', '').ToUpperInvariant()) 74 $font 'SemiBold' $ink
+                & $add $date 12 $font 'Bold' $ink; & $add $time 12 $font 'Bold' $ink 4
+                & $add ([string][char]0x2502) 40 $font 'Light' $ink 10
+            }
+            'Stack' {
+                & $add $(if ($cfg.Hour24) { $now.ToString('HH') } else { $now.ToString('%h') }) 120 $font 'Light' $ink
+                $mm = New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.ColorConverter]::ConvertFromString($inkHex))
+                $mm.Opacity = 0.6
+                & $add $now.ToString('mm') 120 $font 'Light' $mm -48
+                & $add ($day + '  ' + [char]0x00B7 + '  ' + $date) 13 $font 'SemiBold' $ink -10
+            }
+            'Pulse' {
+                $grad = New-Object System.Windows.Media.LinearGradientBrush
+                $grad.StartPoint = '0,0'; $grad.EndPoint = '1,0'
+                foreach ($stop in @(@($look.Accent, 0.0), @($look.Accent2, 1.0))) {
+                    $c = @($stop[0] -split ',' | ForEach-Object { [byte][int]$_ })
+                    $grad.GradientStops.Add((New-Object System.Windows.Media.GradientStop([System.Windows.Media.Color]::FromRgb($c[0], $c[1], $c[2]), $stop[1])))
+                }
+                & $add $(if ($cfg.Hour24) { $now.ToString('HH:mm') } else { $now.ToString('h:mm') }) 92 $font 'SemiBold' $grad
+                & $add ($day + '  ' + [char]0x00B7 + '  ' + $date) 14 $font 'SemiBold' $ink 4
+            }
+            default { & $add ($day + '   ' + [char]0x00B7 + '   ' + $date + '   ' + [char]0x00B7 + '   ' + $time) 15 $font 'SemiBold' $ink }
+        }
+        [void]$layer.Children.Add($clock)
+    }
+    $names = @((T 'DARK'), (T 'MID'), (T 'LIGHT'))
+    if ($cfg.AutoInk) {
+        $ui.ThemePreviewNote.Text = T 'Text color: {0}. Wallpaper brightness under the clock: {1}%.' $names[$slot] ([int][math]::Round($luma.Brightness * 100))
+    } else { $ui.ThemePreviewNote.Text = T 'Text color: {0} (fixed).' $names[$slot] }
+}
+
+function Show-OzThemes {
+    # Builds the THEMES page from the saved settings
+    if (-not $Oz.ThemeCfg) { $Oz.ThemeCfg = Read-OzThemeSettings }
+    $Oz.ThemesShown = $true
+    Update-OzThemeStatus
+    Show-OzThemeLooks
+    Show-OzThemeWidgets
+    Show-OzThemeClockPanel
+    Show-OzThemeWalls
+    Show-OzThemeDock
+    Update-OzThemePreview
+    Update-OzThemeButtons
+}
+
+function Invoke-OzThemeApply {
+    $cfg = $Oz.ThemeCfg
+    if (-not $Oz.Rainmeter -or -not $Oz.Rainmeter.Installed) { Update-OzThemeStatus; if (-not $Oz.Rainmeter.Installed) { Write-OzLog (T 'Rainmeter is not installed. Press GET RAINMETER, install it, then try again.') 'WARN'; return } }
+    $r = @(Invoke-OzJob -Activity (T 'Applying the theme...') -ArgumentList @(, $cfg) -ScriptBlock {
+            param($c)
+            try { Install-OzTheme $c; [pscustomobject]@{ Ok = $true; Msg = '' } }
+            catch { [pscustomobject]@{ Ok = $false; Msg = $_.Exception.Message } }
+        }) | Select-Object -Last 1
+    $Oz.ThemeDirty = -not ($r -and $r.Ok)
+    Update-OzThemeStatus
+    if ($r -and -not $r.Ok) {
+        Write-OzLog ((T 'Theme failed: {0}') -f $r.Msg) 'WARN'
+        [void](Show-OzDialog -Text (T "The theme could not be applied:`n`n{0}" $r.Msg) -Kind Warning)
+    }
+}
+
+function Invoke-OzThemeRemove {
+    $msg = T "Remove the OZZYHN theme?`n`nIts skins are unloaded and the OZZYHN skins folder is deleted. Your wallpaper, your pictures and your other Rainmeter skins stay as they are."
+    if ((Show-OzDialog -Text $msg -Buttons YesNo -Kind Question) -ne 'Yes') { return }
+    $r = @(Invoke-OzJob -Activity (T 'Removing the theme...') -ScriptBlock {
+            try { Remove-OzTheme; [pscustomobject]@{ Ok = $true; Msg = '' } }
+            catch { [pscustomobject]@{ Ok = $false; Msg = $_.Exception.Message } }
+        }) | Select-Object -Last 1
+    if ($r -and -not $r.Ok) { Write-OzLog ((T 'Theme failed: {0}') -f $r.Msg) 'WARN' }
+    $Oz.ThemeDirty = $true
+    Update-OzThemeStatus
+}
+
+function Invoke-OzThemeWallpapers {
+    $pics = [Environment]::GetFolderPath('MyPictures')
+    $dir = Join-Path $pics 'OZZYHN Wallpapers'
+    $made = @(Invoke-OzJob -Activity (T 'Drawing the OZZYHN wallpapers...') -ArgumentList @($dir) -ScriptBlock {
+            param($d)
+            try { New-OzWallpaperArt -Folder $d | ForEach-Object { [pscustomobject]@{ Path = $_ } } }
+            catch { [pscustomobject]@{ Path = ''; Err = $_.Exception.Message } }
+        })
+    $err = $made | Where-Object { $_.Err } | Select-Object -First 1
+    if ($err) { Write-OzLog ((T 'Theme failed: {0}') -f $err.Err) 'WARN'; return }
+    if (@($Oz.ThemeCfg.WallFolders) -notcontains $dir) { $Oz.ThemeCfg.WallFolders = @(@($Oz.ThemeCfg.WallFolders) + $dir) }
+    Show-OzThemeWalls
+    Set-OzThemeValue 'WallFolders' $Oz.ThemeCfg.WallFolders
+    Write-OzLog ((T '{0} wallpapers saved in {1}') -f @($made).Count, $dir) 'OK'
+    Start-Process -FilePath "$env:SystemRoot\explorer.exe" -ArgumentList ('"{0}"' -f $dir)
+}
+
+function Add-OzThemeFolder {
+    Add-Type -AssemblyName System.Windows.Forms
+    $d = New-Object System.Windows.Forms.FolderBrowserDialog
+    $d.Description = T 'Pick a folder with wallpapers (JPG, PNG or BMP).'
+    $d.ShowNewFolderButton = $true
+    if ($d.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
+    $p = $d.SelectedPath
+    if (-not $p -or $p -notmatch '^[A-Za-z]:\\') { return }
+    if (@($Oz.ThemeCfg.WallFolders) -notcontains $p) { $Oz.ThemeCfg.WallFolders = @(@($Oz.ThemeCfg.WallFolders) + $p | Select-Object -First 8) }
+    Show-OzThemeWalls
+    Set-OzThemeValue 'WallFolders' $Oz.ThemeCfg.WallFolders
+}
+
+function Add-OzThemeDockApp {
+    $d = New-Object Microsoft.Win32.OpenFileDialog
+    $d.Filter = (T 'Programs and shortcuts') + ' (*.exe;*.lnk)|*.exe;*.lnk'
+    $d.DereferenceLinks = $false
+    if (-not $d.ShowDialog($Oz.Window)) { return }
+    $p = $d.FileName
+    if (@($Oz.ThemeCfg.DockCustom | Where-Object { $_.Target -eq $p }).Count) { return }
+    $Oz.ThemeCfg.DockCustom = @(@($Oz.ThemeCfg.DockCustom) + [pscustomobject]@{ Name = [IO.Path]::GetFileNameWithoutExtension($p); Target = $p } | Select-Object -First 12)
+    Show-OzThemeDock
+    Set-OzThemeValue 'DockCustom' $Oz.ThemeCfg.DockCustom
+}
+#endregion
+
 #region ============================ EVENTS ============================
 function Initialize-OzEvents {
     $ui = $Oz.UI
@@ -8691,7 +12463,7 @@ function Initialize-OzEvents {
         })
 
     # navigation
-    foreach ($p in 'Dash', 'Tweaks', 'Profiles', 'Games', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log') {
+    foreach ($p in 'Dash', 'Tweaks', 'Profiles', 'Games', 'Themes', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log') {
         $nav = $ui["Nav$p"]
         $nav.Add_Checked({ Show-OzPage ($this.Name -replace '^Nav', '') })
     }
@@ -8743,6 +12515,26 @@ function Initialize-OzEvents {
 
     # games
     $ui.BtnScanGames.Add_Click({ Invoke-OzSafe 'Game scan' { $Oz.GamesShown = $true; Show-OzGames (Get-OzGameScan) } })
+
+    # themes
+    $ui.BtnRmGet.Add_Click({ Open-OzLink $Oz.RainmeterUrl })
+    $ui.BtnRmCheck.Add_Click({ Invoke-OzSafe 'Themes' { Update-OzThemeStatus } })
+    $ui.BtnThemeApply.Add_Click({ Invoke-OzSafe 'Themes' { Invoke-OzThemeApply } })
+    $ui.BtnThemeRemove.Add_Click({ Invoke-OzSafe 'Themes' { Invoke-OzThemeRemove } })
+    $ui.BtnWallMake.Add_Click({ Invoke-OzSafe 'Themes' { Invoke-OzThemeWallpapers } })
+    $ui.BtnWallAdd.Add_Click({ Invoke-OzSafe 'Themes' { Add-OzThemeFolder } })
+    $ui.BtnWallOpen.Add_Click({
+            Invoke-OzSafe 'Themes' {
+                $rm = Get-OzRainmeter
+                if ($rm.Running -and [IO.Directory]::Exists((Join-Path $rm.SkinPath 'OZZYHN\Walls'))) { Send-OzRainmeterBang $rm '!ActivateConfig' @('OZZYHN\Walls', 'Walls.ini') }
+            }
+        })
+    $ui.BtnDockAdd.Add_Click({ Invoke-OzSafe 'Themes' { Add-OzThemeDockApp } })
+    $ui.ThemeTabGeneral.Add_Checked({ if ($Oz.ThemesShown) { Show-OzThemeClockPanel } })
+    $ui.ThemeTabLook.Add_Checked({ if ($Oz.ThemesShown) { Show-OzThemeClockPanel } })
+    $ui.ThemePreviewBox.Add_SizeChanged({
+            if ($Oz.ThemesShown -and [math]::Abs($_.NewSize.Width - $_.PreviousSize.Width) -gt 2) { try { Update-OzThemePreview } catch { } }
+        })
 
     # debloat
     $ui.BtnScanApps.Add_Click({ Invoke-OzSafe 'App scan' { $Oz.BloatChecks = @(); Show-OzBloat (Get-OzInstalledBloat) } })
@@ -8872,6 +12664,7 @@ function Invoke-OzScan {
     Set-OzBusy $true (T 'Scanning hardware: CPU, GPU, RAM, storage, board, battery...')
     $Oz.NoThermal = $false
     $Oz.EeeCache = $null
+    $Oz.NicPropCache = @{}
     [void](Read-OzJournal)
     if (-not $Rescan) {
         Initialize-OzCatalog
@@ -8977,6 +12770,12 @@ function Update-OzCompactLayout {
     $v = if ($h -lt 760) { 'Collapsed' } else { 'Visible' }
     foreach ($n in 'NavProfileCard', 'NavActiveCard') {
         if ($Oz.UI[$n] -and $Oz.UI[$n].Visibility -ne $v) { $Oz.UI[$n].Visibility = $v }
+    }
+    # Slightly shorter menu buttons on short screens, so all ten fit
+    $nh = if ($h -lt 760) { 38 } else { 42 }
+    foreach ($n in 'Dash', 'Tweaks', 'Profiles', 'Games', 'Themes', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log') {
+        $b = $Oz.UI["Nav$n"]
+        if ($b -and $b.Height -ne $nh) { $b.Height = $nh }
     }
 }
 
