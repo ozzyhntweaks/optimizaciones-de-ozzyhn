@@ -79,6 +79,39 @@ foreach ($lang in 'en', 'es') {
 }
 $Oz.Lang = 'en'
 if (-not $script:Problems.Count) { Pass "skin files built for $n combinations of look, style, position, size and language" }
+# Three screens (made up: this machine has one): the clock on screen 2, the bar on every screen,
+# the dock on screen 3, only some bar items, large dock icons, solid backgrounds
+$fake = @(
+    [pscustomobject]@{ N = 1; Primary = $true; X = 0; Y = 0; W = 1920; H = 1080; WX = 0; WY = 0; WW = 1920; WH = 1040 }
+    [pscustomobject]@{ N = 2; Primary = $false; X = 1920; Y = 0; W = 2560; H = 1440; WX = 1920; WY = 0; WW = 2560; WH = 1440 }
+    [pscustomobject]@{ N = 3; Primary = $false; X = -1280; Y = 0; W = 1280; H = 1024; WX = -1280; WY = 0; WW = 1280; WH = 1024 })
+$cfg = Get-OzThemeDefaults
+$cfg.ScreenClock = '2'; $cfg.ScreenBar = 'all'; $cfg.ScreenDock = '3'
+$cfg.BarItems = @('Cpu', 'Vol'); $cfg.DockSize = 'L'; $cfg.BgStyle = 'Solid'; $cfg.Scale = 100
+$files = New-OzThemeFiles -Cfg $cfg -InkSlot 1 -Screens $fake
+$set = $files['@Resources\Settings.inc'].Text
+$copies = @(Get-OzThemeCopies $cfg $fake | ForEach-Object { $_.Config })
+$want = 'OZZYHN\Clock', 'OZZYHN\Bar', 'OZZYHN\Bar2', 'OZZYHN\Bar3', 'OZZYHN\Dock'
+if (($copies -join ',') -eq ($want -join ',')) { Pass "three screens: one clock, a bar on each screen, one dock ($($copies -join ', '))" } else { Fail "three screens: copies are $($copies -join ', ')" }
+$checks = [ordered]@{
+    'the clock is placed on screen 2'           = ($set -match 'PosX=\(#WORKAREAX@2#' -and $set -match 'PosY=\(#WORKAREAY@2#')
+    'the first bar is on the main screen'       = ($files['Bar\Bar.ini'].Text -match 'BarCX=50%' -and $files['Bar\Bar.ini'].Text -match 'BarSW=#SCREENAREAWIDTH#')
+    'the second bar is on screen 2'             = ($files['Bar2\Bar.ini'].Text -match 'BarSW=#SCREENAREAWIDTH@2#' -and $files['Bar2\Bar.ini'].Text -match 'BarY=\(#WORKAREAY@2#')
+    'the third bar is on screen 3'              = ($files['Bar3\Bar.ini'].Text -match 'BarCX=\(#SCREENAREAX@3#\+#SCREENAREAWIDTH@3#/2\)')
+    'the dock is on screen 3'                   = ($files['Dock\Dock.ini'].Text -match '#WORKAREAX@3#' -and $files['Dock\Dock.ini'].Text -match '#WORKAREAHEIGHT@3#')
+    'the bar shows only CPU and volume'         = ($set -match 'ShowCpu=1' -and $set -match 'ShowVol=1' -and $set -match 'NoDate=1' -and $set -match 'NoRam=1' -and $set -match 'NoNet=1' -and $set -match 'NoBat=1')
+    'large dock icons'                          = ($files['Dock\Dock.ini'].Text -match '\bW=56\b')
+    'solid backgrounds'                         = ($set -match 'PillBg=\d+,\d+,\d+,250')
+    'the picker opens under the main bar'       = ($set -match 'WallsX=50%')
+}
+foreach ($k in $checks.Keys) { if ($checks[$k]) { Pass "three screens: $k" } else { Fail "three screens: $k" } }
+$cfg.ScreenClock = '7'
+if ((Get-OzThemeCopies $cfg $fake | Where-Object Part -EQ 'Clock').At -eq '') { Pass 'a screen that is not connected falls back to the main screen' } else { Fail 'screen 7 (not connected) did not fall back to the main screen' }
+foreach ($k in $files.Keys) {
+    if ($files[$k].Text -match '\{\{') { Fail "$k (three screens): a size placeholder was left in the file" }
+    if (-not $files[$k].Unicode -and $files[$k].Text -match '[^\x09\x0A\x0D\x20-\x7E]') { Fail "$k (three screens) is written as ASCII but holds other characters" }
+}
+
 # Windows set to a comma-decimal region (Spanish, German...) must write the same skin files
 $cfg = Get-OzThemeDefaults
 $cfg.Scale = 125
@@ -201,6 +234,38 @@ Install-OzTheme $cfg
 Start-Sleep -Seconds 5
 Save-Screen 'theme-es-neon-blade'
 $Oz.Lang = 'en'
+
+# This screen picked by its number (the way a second screen is picked): Rainmeter's own variables
+# for that screen (#WORKAREAX@1#...) must work and put every skin where "main screen" put it
+function Get-RmPos([string]$Config) {
+    $sec = ''; $x = $null; $y = $null
+    foreach ($l in [IO.File]::ReadAllLines((Join-Path $rmData 'Rainmeter.ini'))) {
+        if ($l -match '^\s*\[(.+)\]\s*$') { $sec = $Matches[1]; continue }
+        if ($sec -eq $Config -and $l -match '^\s*WindowX\s*=\s*(.*)$') { $x = $Matches[1].Trim() }
+        if ($sec -eq $Config -and $l -match '^\s*WindowY\s*=\s*(.*)$') { $y = $Matches[1].Trim() }
+    }
+    if ($null -ne $x) { "$x / $y" }
+}
+$before = @{}
+foreach ($c in 'OZZYHN\Clock', 'OZZYHN\Bar', 'OZZYHN\Dock') { $before[$c] = Get-RmPos $c }
+$here = @(Get-OzScreens)
+Pass "screens on this machine: $(@($here | ForEach-Object { '{0} ({1}x{2}{3})' -f $_.N, $_.W, $_.H, $(if ($_.Primary) { ', main' }) }) -join '; ')"
+$n1 = [string]($here | Where-Object Primary | Select-Object -First 1).N
+$cfg.ScreenClock = $n1; $cfg.ScreenBar = 'all'; $cfg.ScreenDock = $n1
+$cfg.BarItems = @('Date', 'Cpu', 'Net'); $cfg.DockSize = 'S'; $cfg.BgStyle = 'Glass'
+Install-OzTheme $cfg
+Start-Sleep -Seconds 5
+Save-Screen 'theme-screen-by-number'
+$rm = Get-OzRainmeter
+foreach ($c in 'OZZYHN\Clock', 'OZZYHN\Bar', 'OZZYHN\Dock') { if ($rm.Active.ContainsKey($c)) { Pass "screen $n1 by number: $c is loaded" } else { Fail "screen $n1 by number: $c is not loaded" } }
+$set = [IO.File]::ReadAllText((Join-Path $root '@Resources\Settings.inc'))
+if ($set -match "#WORKAREAX@$n1#") { Pass "screen $n1 by number: the files use #WORKAREAX@$n1#" } else { Fail "screen $n1 by number: Settings.inc does not use #WORKAREAX@$n1#" }
+foreach ($c in 'OZZYHN\Clock', 'OZZYHN\Bar', 'OZZYHN\Dock') {
+    $after = Get-RmPos $c
+    if ($null -eq $before[$c] -or $null -eq $after) { Write-Host "::notice::$c position not in Rainmeter.ini ($($before[$c]) -> $after)"; continue }
+    if ($before[$c] -eq $after) { Pass "screen $n1 by number: $c at the same place as on the main screen ($after)" } else { Fail "screen $n1 by number: $c moved from $($before[$c]) to $after" }
+}
+$cfg.ScreenClock = 'main'; $cfg.ScreenBar = 'main'; $cfg.ScreenDock = 'main'; $cfg.BarItems = @($Oz.ThemeBarItems); $cfg.DockSize = 'M'; $cfg.BgStyle = 'Normal'
 
 # ---------- 7. Rainmeter's log ----------
 $log = @(Get-Content -LiteralPath (Join-Path $rmData 'Rainmeter.log') -ErrorAction SilentlyContinue)

@@ -46,6 +46,7 @@ $Oz.Settings  = Join-Path $Oz.DataDir 'settings.json'
 $Oz.LogDir    = Join-Path $Oz.DataDir 'logs'
 $Oz.LogFile   = Join-Path $Oz.LogDir ('ozzyhn-{0}.log' -f (Get-Date -Format 'yyyyMMdd'))
 $Oz.LogQueue  = New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]'
+$Oz.LogLock   = New-Object object
 $Oz.Lang      = 'en'
 $Oz.Es        = New-Object 'System.Collections.Generic.Dictionary[string,string]'
 $Oz.Tweaks    = @()
@@ -227,11 +228,15 @@ function Write-OzLog {
         [string]$Message,
         [ValidateSet('INFO', 'OK', 'WARN', 'ERR', 'STEP')][string]$Level = 'INFO'
     )
-    $line = '[{0}] [{1,-4}] {2}' -f (Get-Date -Format 'HH:mm:ss'), $Level, $Message
+    $line = '[{0}] [{1,-4}] {2}' -f [DateTime]::Now.ToString('HH:mm:ss'), $Level, $Message
+    # .NET file calls instead of Test-Path / Add-Content: logging happens on every step and must stay
+    # cheap. The lock keeps lines from the window and from background runspaces whole.
+    $lock = $Oz.LogLock
+    if ($lock) { [System.Threading.Monitor]::Enter($lock) }
     try {
-        if (-not (Test-Path -LiteralPath $Oz.LogDir)) { New-Item -ItemType Directory -Path $Oz.LogDir -Force | Out-Null }
-        Add-Content -LiteralPath $Oz.LogFile -Value $line -Encoding UTF8 -ErrorAction SilentlyContinue
-    } catch { }
+        if ($Oz.LogDirMade -ne $Oz.LogDir) { [void][IO.Directory]::CreateDirectory($Oz.LogDir); $Oz.LogDirMade = $Oz.LogDir }
+        [IO.File]::AppendAllText($Oz.LogFile, $line + "`r`n", [Text.Encoding]::UTF8)
+    } catch { } finally { if ($lock) { [System.Threading.Monitor]::Exit($lock) } }
     # Background runspaces must not touch WPF controls: the UI thread picks the line up from the queue.
     if ($OzWorker) { $Oz.LogQueue.Enqueue(@($line, $Message, $Level)); return }
     Show-OzLogLine $line $Message $Level
@@ -361,9 +366,34 @@ function Receive-OzWorker {
 
 function Wait-OzWorker {
     # Waits for a worker while keeping the window responsive. Shows elapsed seconds in the status bar.
+    # With the window open it waits inside the window's own message loop (a dispatcher frame) and
+    # checks the worker on a timer, so hover, scrolling and clicks run at full speed meanwhile.
+    # The old way (sleep 15 ms, then let the window catch up) made everything stutter during scans.
     param($W, [string]$Activity)
     $results = New-Object System.Collections.ArrayList
     $lastSec = -1
+    $disp = if ($Oz.Window) { $Oz.Window.Dispatcher } else { $null }
+    if ($disp -and $disp.CheckAccess() -and -not $W.Handle.IsCompleted) {
+        $frame = New-Object System.Windows.Threading.DispatcherFrame
+        $timer = New-Object System.Windows.Threading.DispatcherTimer ([System.Windows.Threading.DispatcherPriority]::Background)
+        $timer.Interval = [TimeSpan]::FromMilliseconds(30)
+        $timer.Tag = @{ W = $W; Results = $results; Activity = $Activity; LastSec = -1; Frame = $frame }
+        $timer.Add_Tick({
+                $s = $this.Tag
+                try {
+                    foreach ($o in (Receive-OzWorker $s.W)) { [void]$s.Results.Add($o) }
+                    if ($s.Activity -and $Oz.UI.StatusText) {
+                        $sec = [int]([DateTime]::Now - $s.W.Started).TotalSeconds
+                        if ($sec -ne $s.LastSec -and $sec -ge 2) { $Oz.UI.StatusText.Text = '{0}  {1} s' -f $s.Activity, $sec; $s.LastSec = $sec }
+                    }
+                    if ($s.W.Handle.IsCompleted) { $this.Stop(); $s.Frame.Continue = $false }
+                } catch { $this.Stop(); $s.Frame.Continue = $false }
+            })
+        $timer.Start()
+        try { [System.Windows.Threading.Dispatcher]::PushFrame($frame) }
+        catch { }   # the window cannot run a nested loop right now: the loop below finishes the wait
+        finally { $timer.Stop() }
+    }
     try {
         while (-not $W.Handle.IsCompleted) {
             foreach ($o in (Receive-OzWorker $W)) { [void]$results.Add($o) }
@@ -514,6 +544,7 @@ function Read-OzJournal {
 }
 
 function Save-OzJournal {
+    $Oz.JournalRev = [int]$Oz.JournalRev + 1   # tells Update-OzJournalView the list changed
     try {
         if (-not (Test-Path -LiteralPath $Oz.DataDir)) { New-Item -ItemType Directory -Path $Oz.DataDir -Force | Out-Null }
         $json = (Read-OzJournal) | ConvertTo-Json -Depth 12
@@ -3852,7 +3883,7 @@ $Oz.ThemeTpl['Bar\Bar.ini'] = @'
 Update=1000
 AccurateText=1
 Group=OzAll
-OnRefreshAction=[!SetWindowPosition "50%" "#BarY#" "50%" "0%"][!ZPos #BarZ#][!Draggable 0][!KeepOnScreen 1]
+OnRefreshAction=[!SetWindowPosition "#BarCX#" "#BarY#" "50%" "0%"][!ZPos #BarZ#][!Draggable 0][!KeepOnScreen 1]
 ContextTitle=#S_Wallpapers#
 ContextAction=[!ToggleConfig "OZZYHN\Walls" "Walls.ini"]
 
@@ -3866,7 +3897,8 @@ License=MIT
 [Variables]
 @Include=#@#Settings.inc
 @Include2=#@#Strings.inc
-BW=(#SCREENAREAWIDTH#-2*#BarX#)
+; BarCX, BarSW and BarY (the screen this copy of the bar is on) are written here by the app
+BW=(#BarSW#-2*#BarX#)
 PH={{28}}
 PR={{14}}
 Gap={{6}}
@@ -3879,11 +3911,12 @@ WVol={{70}}
 WBat={{80}}
 WSet={{34}}
 XSet=(#BW#-#WSet#)
-XBat=(#XSet#-(#Gap#+#WBat#)*#HasBattery#)
-XVol=(#XBat#-#Gap#-#WVol#)
-XNet=(#XVol#-#Gap#-#WNet#)
-XRam=(#XNet#-#Gap#-#WRam#)
-XCpu=(#XRam#-#Gap#-#WCpu#)
+; each pill takes room only when it is shown (THEMES page: status bar items)
+XBat=(#XSet#-(#Gap#+#WBat#)*#ShowBat#)
+XVol=(#XBat#-(#Gap#+#WVol#)*#ShowVol#)
+XNet=(#XVol#-(#Gap#+#WNet#)*#ShowNet#)
+XRam=(#XNet#-(#Gap#+#WRam#)*#ShowRam#)
+XCpu=(#XRam#-(#Gap#+#WCpu#)*#ShowCpu#)
 ; centered, but slid left when the screen is narrow so it never covers the CPU pill
 XMid=(Max(#WLeft#+#Gap#,Min((#BW#-#WMid#)/2,#XCpu#-#Gap#-#WMid#)))
 MidRoom=(#XCpu#-#Gap#-#WMid#-#WLeft#-#Gap#)
@@ -3919,22 +3952,27 @@ Substitute="(?i)^(monday|lunes)$":"#S_Mon#","(?i)^(tuesday|martes)$":"#S_Tue#","
 
 [mCpu]
 Measure=CPU
+Disabled=#NoCpu#
 
 [mRamUsed]
 Measure=PhysicalMemory
 UpdateDivider=2
+Disabled=#NoRam#
 
 [mRamGB]
 Measure=Calc
 Formula=mRamUsed / 1073741824
 UpdateDivider=2
+Disabled=#NoRam#
 
 [mNetIn]
 Measure=NetIn
+Disabled=#NoNet#
 
 [mVol]
 Measure=Plugin
 Plugin=Win7AudioPlugin
+Disabled=#NoVol#
 
 ; Volume as a number only (-1 = muted or no sound device)
 [mVolNum]
@@ -3956,7 +3994,7 @@ IfTrueAction=[!HideMeter pMid][!HideMeter tMid]
 Measure=Plugin
 Plugin=PowerPlugin
 PowerState=Percent
-Disabled=#NoBattery#
+Disabled=#NoBat#
 
 ; ---------------- pill style ----------------
 [sPillText]
@@ -4025,9 +4063,11 @@ Meter=Shape
 Shape=Rectangle 0.5,0.5,(#WMid#-1),(#PH#-1),#PR# | Fill Color #PillBg# | Stroke Color #PillLine# | StrokeWidth 1
 X=#XMid#
 Y=0
+Hidden=#NoDate#
 [tMid]
 Meter=String
 MeterStyle=sPillText
+Hidden=#NoDate#
 MeasureName=mDayShort
 MeasureName2=mBarDate
 MeasureName3=mClock
@@ -4044,17 +4084,20 @@ Meter=Shape
 Shape=Rectangle 0.5,0.5,(#WCpu#-1),(#PH#-1),#PR# | Fill Color #PillBg# | Stroke Color #PillLine# | StrokeWidth 1
 X=#XCpu#
 Y=0
+Hidden=#NoCpu#
 LeftMouseUpAction=#ActTaskMgr#
 MouseActionCursor=1
 [tCpuL]
 Meter=String
 MeterStyle=sPillLabel
+Hidden=#NoCpu#
 Text=CPU
 X=(#XCpu#+{{12}})
 LeftMouseUpAction=#ActTaskMgr#
 [tCpu]
 Meter=String
 MeterStyle=sPillText
+Hidden=#NoCpu#
 MeasureName=mCpu
 Text=%1%
 NumOfDecimals=0
@@ -4067,17 +4110,20 @@ Meter=Shape
 Shape=Rectangle 0.5,0.5,(#WRam#-1),(#PH#-1),#PR# | Fill Color #PillBg# | Stroke Color #PillLine# | StrokeWidth 1
 X=#XRam#
 Y=0
+Hidden=#NoRam#
 LeftMouseUpAction=#ActTaskMgr#
 MouseActionCursor=1
 [tRamL]
 Meter=String
 MeterStyle=sPillLabel
+Hidden=#NoRam#
 Text=RAM
 X=(#XRam#+{{12}})
 LeftMouseUpAction=#ActTaskMgr#
 [tRam]
 Meter=String
 MeterStyle=sPillText
+Hidden=#NoRam#
 MeasureName=mRamGB
 Text=%1 GB
 NumOfDecimals=1
@@ -4090,14 +4136,17 @@ Meter=Shape
 Shape=Rectangle 0.5,0.5,(#WNet#-1),(#PH#-1),#PR# | Fill Color #PillBg# | Stroke Color #PillLine# | StrokeWidth 1
 X=#XNet#
 Y=0
+Hidden=#NoNet#
 [tNetIcon]
 Meter=String
 MeterStyle=sPillIcon
+Hidden=#NoNet#
 Text=[\xE896]
 X=(#XNet#+{{11}})
 [tNet]
 Meter=String
 MeterStyle=sPillText
+Hidden=#NoNet#
 MeasureName=mNetIn
 Text=%1B/s
 AutoScale=1
@@ -4110,6 +4159,7 @@ Meter=Shape
 Shape=Rectangle 0.5,0.5,(#WVol#-1),(#PH#-1),#PR# | Fill Color #PillBg# | Stroke Color #PillLine# | StrokeWidth 1
 X=#XVol#
 Y=0
+Hidden=#NoVol#
 LeftMouseUpAction=#ActVolMute#
 MouseScrollUpAction=#ActVolUp#
 MouseScrollDownAction=#ActVolDown#
@@ -4117,6 +4167,7 @@ MouseActionCursor=1
 [tVolIcon]
 Meter=String
 MeterStyle=sPillIcon
+Hidden=#NoVol#
 Text=[\xE767]
 X=(#XVol#+{{11}})
 LeftMouseUpAction=#ActVolMute#
@@ -4125,6 +4176,7 @@ MouseScrollDownAction=#ActVolDown#
 [tVol]
 Meter=String
 MeterStyle=sPillText
+Hidden=#NoVol#
 MeasureName=mVolNum
 Text=%1%
 NumOfDecimals=0
@@ -4139,13 +4191,13 @@ Meter=Shape
 Shape=Rectangle 0.5,0.5,(#WBat#-1),(#PH#-1),#PR# | Fill Color #PillBg# | Stroke Color #PillLine# | StrokeWidth 1
 X=#XBat#
 Y=0
-Hidden=#NoBattery#
+Hidden=#NoBat#
 [tBatIcon]
 Meter=String
 MeterStyle=sPillIcon
 Text=[\xE83F]
 X=(#XBat#+{{11}})
-Hidden=#NoBattery#
+Hidden=#NoBat#
 [tBat]
 Meter=String
 MeterStyle=sPillText
@@ -4154,7 +4206,7 @@ Text=%1%
 NumOfDecimals=0
 StringAlign=RightCenter
 X=(#XBat#+#WBat#-{{12}})
-Hidden=#NoBattery#
+Hidden=#NoBat#
 
 [pSet]
 Meter=Shape
@@ -4180,7 +4232,7 @@ $Oz.ThemeTpl['Walls\Walls.ini'] = @'
 Update=-1
 AccurateText=1
 Group=OzAll
-OnRefreshAction=[!SetWindowPosition "50%" "#WallsY#" "50%" "0%"][!ZPos 1][!Draggable 0][!KeepOnScreen 1][!CommandMeasure mWalls "Render()"]
+OnRefreshAction=[!SetWindowPosition "#WallsX#" "#WallsY#" "50%" "0%"][!ZPos 1][!Draggable 0][!KeepOnScreen 1][!CommandMeasure mWalls "Render()"]
 ContextTitle=#S_Rescan#
 ContextAction=[!CommandMeasure mWalls "StartIndex()"]
 ContextTitle2=#S_OpenFolder#
@@ -4762,6 +4814,9 @@ $Oz.ThemeLooks = [ordered]@{
         TextMain = '226,240,250'; TextSub = '160,190,210'; Accent = '120,210,255'; Accent2 = '180,140,255' }
 }
 $Oz.ThemeStyles = @('Horizon', 'Blade', 'Stack', 'Pulse', 'Minimal')
+# What the status bar can show (the settings button is always there), and the dock icon sizes
+$Oz.ThemeBarItems = @('Date', 'Cpu', 'Ram', 'Net', 'Vol', 'Bat')
+$Oz.ThemeDockSizes = [ordered]@{ S = 38; M = 46; L = 56 }
 $Oz.ThemePositions = @('TL', 'T', 'TR', 'L', 'C', 'R', 'BL', 'B', 'BR')
 # Rainmeter time formats and the .NET formats used to show an example in the app
 $Oz.ThemeDateFormats = @(
@@ -4815,6 +4870,8 @@ function Get-OzThemeDefaults {
         InkDark = '#141414'; InkMid = '#4A4A4A'; InkLight = '#F5F5F5'
         Bar = $true; BarOnTop = $false; Dock = $true; DockApps = @(); DockCustom = @(); HideSamples = $true
         WallFolders = @((Join-Path $pics 'OZZYHN Wallpapers')); WallFit = 'Fill'
+        ScreenClock = 'main'; ScreenBar = 'main'; ScreenDock = 'main'
+        BarItems = @($Oz.ThemeBarItems); DockSize = 'M'; BgStyle = 'Normal'
     }
 }
 
@@ -4845,6 +4902,12 @@ function Read-OzThemeSettings {
     $cfg.WallFolders = @(@($cfg.WallFolders) | Where-Object { $_ -and [string]$_ -match '^[A-Za-z]:\\' } | ForEach-Object { [string]$_ } | Select-Object -Unique -First 8)
     $cfg.DockApps = @(@($cfg.DockApps) | Where-Object { $_ } | ForEach-Object { [string]$_ })
     $cfg.DockCustom = @(@($cfg.DockCustom) | Where-Object { $_ -and $_.Target } | Select-Object -First 12)
+    if ([string]$cfg.ScreenClock -notmatch '^(main|[1-9]\d?)$') { $cfg.ScreenClock = 'main' }
+    foreach ($k in 'ScreenBar', 'ScreenDock') { if ([string]$cfg[$k] -notmatch '^(main|all|[1-9]\d?)$') { $cfg[$k] = 'main' } }
+    foreach ($k in 'ScreenClock', 'ScreenBar', 'ScreenDock') { $cfg[$k] = [string]$cfg[$k] }
+    $cfg.BarItems = @(@($cfg.BarItems) | ForEach-Object { [string]$_ } | Where-Object { $Oz.ThemeBarItems -contains $_ } | Select-Object -Unique)
+    if (-not $Oz.ThemeDockSizes.Contains([string]$cfg.DockSize)) { $cfg.DockSize = 'M' }
+    if ($cfg.BgStyle -notin 'Glass', 'Normal', 'Solid') { $cfg.BgStyle = 'Normal' }
     $cfg
 }
 
@@ -4895,18 +4958,83 @@ function Get-OzRelLum {
 
 function Get-OzThemePlace {
     # Where the clock sits: Rainmeter window position, anchor, text alignment and the part of the
-    # wallpaper to read for its color (Cx, Cy as fractions of the screen)
-    param([string]$Pos, [int]$MarginX, [int]$MarginY)
+    # wallpaper to read for its color (Cx, Cy as fractions of the screen). $At is '' for the main
+    # screen or '@2', '@3'... for another one (Rainmeter's own variables for each screen).
+    param([string]$Pos, [int]$MarginX, [int]$MarginY, [string]$At = '')
     $i = [array]::IndexOf($Oz.ThemePositions, $Pos)
     if ($i -lt 0) { $i = 4 }
     $col = $i % 3; $row = [math]::Floor($i / 3)
-    $x = @(('(#WORKAREAX#+{0})' -f $MarginX), '(#WORKAREAX#+#WORKAREAWIDTH#/2)', ('(#WORKAREAX#+#WORKAREAWIDTH#-{0})' -f $MarginX))[$col]
-    $y = @(('(#WORKAREAY#+{0})' -f $MarginY), '(#WORKAREAY#+#WORKAREAHEIGHT#/2)', ('(#WORKAREAY#+#WORKAREAHEIGHT#-{0})' -f $MarginY))[$row]
+    $x = @(('(#WORKAREAX{1}#+{0})' -f $MarginX, $At), ('(#WORKAREAX{0}#+#WORKAREAWIDTH{0}#/2)' -f $At), ('(#WORKAREAX{1}#+#WORKAREAWIDTH{1}#-{0})' -f $MarginX, $At))[$col]
+    $y = @(('(#WORKAREAY{1}#+{0})' -f $MarginY, $At), ('(#WORKAREAY{0}#+#WORKAREAHEIGHT{0}#/2)' -f $At), ('(#WORKAREAY{1}#+#WORKAREAHEIGHT{1}#-{0})' -f $MarginY, $At))[$row]
     [pscustomobject]@{
         PosX = $x; PosY = $y; AnchorX = @('0%', '50%', '100%')[$col]; AnchorY = @('0%', '50%', '100%')[$row]
         Align = @('Left', 'Center', 'Right')[$col]; AlignK = @('0', '0.5', '1')[$col]
         Cx = @('0.2', '0.5', '0.8')[$col]; Cy = @('0.22', '0.5', '0.78')[$row]
     }
+}
+
+function Get-OzScreens {
+    # The screens connected right now, numbered like Windows numbers its displays (\\.\DISPLAY2 is
+    # screen 2), which is also how Rainmeter numbers them (#WORKAREAX@2#). Bounds are in pixels.
+    $list = @()
+    try {
+        Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
+        $i = 0
+        foreach ($sc in @([System.Windows.Forms.Screen]::AllScreens)) {
+            $i++
+            $n = if ([string]$sc.DeviceName -match 'DISPLAY(\d+)\s*$') { [int]$Matches[1] } else { $i }
+            $b = $sc.Bounds; $w = $sc.WorkingArea
+            $list += [pscustomobject]@{ N = $n; Primary = [bool]$sc.Primary; X = $b.X; Y = $b.Y; W = $b.Width; H = $b.Height; WX = $w.X; WY = $w.Y; WW = $w.Width; WH = $w.Height }
+        }
+    } catch { }
+    if (-not $list.Count) {
+        $w = [int][System.Windows.SystemParameters]::PrimaryScreenWidth; $h = [int][System.Windows.SystemParameters]::PrimaryScreenHeight
+        $list += [pscustomobject]@{ N = 1; Primary = $true; X = 0; Y = 0; W = $w; H = $h; WX = 0; WY = 0; WW = $w; WH = $h }
+    }
+    # two outputs reporting the same number would make the choice ambiguous: number them in order then
+    if (@($list | Select-Object -ExpandProperty N -Unique).Count -ne $list.Count) { $k = 0; foreach ($x in $list) { $k++; $x.N = $k } }
+    @($list | Sort-Object N)
+}
+
+function Resolve-OzThemeScreens {
+    # Turns a screen setting ('main', a screen number, or 'all' for the bar and the dock) into the
+    # Rainmeter suffix of every copy to load: '' = main screen, '@2' = screen 2. A screen that is not
+    # connected any more falls back to the main screen.
+    param([string]$Value, [object[]]$Screens, [switch]$AllowAll)
+    $Screens = @($Screens)
+    if ($AllowAll -and $Value -eq 'all' -and $Screens.Count -gt 1) {
+        $main = @($Screens | Where-Object Primary) | Select-Object -First 1
+        $out = @('')
+        foreach ($sc in $Screens) { if (-not $main -or $sc.N -ne $main.N) { $out += ('@{0}' -f $sc.N) } }
+        return , $out
+    }
+    if ($Value -match '^\d+$' -and @($Screens | Where-Object { $_.N -eq [int]$Value }).Count) { return , @('@' + $Value) }
+    , @('')
+}
+
+function Get-OzThemeScreenOf {
+    # The screen (from Get-OzScreens) that a suffix from Resolve-OzThemeScreens stands for
+    param([string]$At, [object[]]$Screens)
+    if ($At -match '^@(\d+)$') { $f = @($Screens | Where-Object { $_.N -eq [int]$Matches[1] }) | Select-Object -First 1; if ($f) { return $f } }
+    $m = @($Screens | Where-Object Primary) | Select-Object -First 1
+    if ($m) { return $m }
+    @($Screens) | Select-Object -First 1
+}
+
+function Get-OzThemeColors {
+    # The look's colors with the background strength picked on the THEMES page applied to the bar,
+    # dock and picker backgrounds ('r,g,b,alpha' as Rainmeter writes them)
+    param($Look, [string]$Bg = 'Normal')
+    $c = @{}
+    foreach ($k in 'PillBg', 'PillLine', 'PanelBg', 'TextMain', 'TextSub', 'Accent', 'Accent2') { $c[$k] = [string]$Look[$k] }
+    foreach ($k in 'PillBg', 'PanelBg') {
+        $p = @($c[$k] -split ',')
+        if ($p.Count -lt 4) { continue }
+        $a = [int]$p[3]
+        $a = switch ($Bg) { 'Glass' { [int][math]::Round($a * 0.55) } 'Solid' { 250 } default { $a } }
+        $c[$k] = '{0},{1},{2},{3}' -f $p[0], $p[1], $p[2], [math]::Max(0, [math]::Min(255, $a))
+    }
+    $c
 }
 
 function Get-OzDockCatalog {
@@ -4951,9 +5079,10 @@ function Get-OzDockCatalog {
 }
 
 function Get-OzDockApps {
-    # The apps that go on the dock for these settings, in dock order
-    param($Cfg)
-    $cat = @(Get-OzDockCatalog)
+    # The apps that go on the dock for these settings, in dock order. -Catalog reuses a list
+    # already read (the THEMES page keeps one, so its preview does not check every app again).
+    param($Cfg, $Catalog)
+    $cat = if ($null -ne $Catalog) { @($Catalog) } else { @(Get-OzDockCatalog) }
     $chosen = @($Cfg.DockApps)
     $apps = @()
     if ($chosen.Count) { foreach ($id in $chosen) { $apps += @($cat | Where-Object Id -EQ $id) } }
@@ -4967,10 +5096,11 @@ function Get-OzDockApps {
 }
 
 function New-OzDockIni {
-    # The dock skin is written for the exact number of apps, so it needs no script
-    param([object[]]$Apps)
+    # The dock skin is written for the exact number of apps, so it needs no script.
+    # $At is the screen ('' = main, '@2' = screen 2); $Tag keeps the icon files of each copy apart.
+    param([object[]]$Apps, [int]$IconSize = 46, [string]$At = '', [string]$Tag = '')
     $n = $Apps.Count
-    $I = 46; $Gap = 12; $Pad = 12
+    $I = $IconSize; $Gap = 12; $Pad = 12
     $iconsW = $n * $I + [math]::Max(0, $n - 1) * $Gap
     $W = 2 * $Pad + $iconsW + $Gap + 1 + $Gap + $I
     $sb = New-Object System.Text.StringBuilder
@@ -4980,7 +5110,7 @@ function New-OzDockIni {
     & $add 'Update=1000'
     & $add 'AccurateText=1'
     & $add 'Group=OzAll'
-    & $add 'OnRefreshAction=[!SetWindowPosition "(#WORKAREAX#+#WORKAREAWIDTH#/2)" "(#WORKAREAY#+#WORKAREAHEIGHT#-#DockM#)" "50%" "100%"][!ZPos -2][!Draggable 0]'
+    & $add ('OnRefreshAction=[!SetWindowPosition "(#WORKAREAX{0}#+#WORKAREAWIDTH{0}#/2)" "(#WORKAREAY{0}#+#WORKAREAHEIGHT{0}#-#DockM#)" "50%" "100%"][!ZPos -2][!Draggable 0]' -f $At)
     & $add ''
     & $add '[Metadata]'
     & $add 'Name=OZZYHN Dock'
@@ -5010,7 +5140,7 @@ function New-OzDockIni {
         & $add 'Type=Icon'
         & $add 'IconSize=ExtraLarge'
         & $add ('Index={0}' -f $k)
-        & $add ('IconPath=#@#Dock\Icons\{0}.ico' -f $k)
+        & $add ('IconPath=#@#Dock\Icons\{0}{1}.ico' -f $Tag, $k)
     }
     & $add ''
     & $add '[mBox]'
@@ -5065,13 +5195,34 @@ function New-OzDockIni {
     $sb.ToString()
 }
 
+function Get-OzThemeCopies {
+    # Every skin the theme has for these settings: one clock, and a bar and a dock on each screen
+    # picked for them ('all' = one copy per screen). Config is the Rainmeter config, At the screen
+    # ('' = main, '@2' = screen 2), On whether it is loaded.
+    param($Cfg, [object[]]$Screens)
+    if ($null -eq $Screens) { $Screens = Get-OzScreens }
+    $out = @([pscustomobject]@{ Part = 'Clock'; Config = 'OZZYHN\Clock'; Folder = 'Clock'; File = ('{0}.ini' -f $Cfg.Style); At = (Resolve-OzThemeScreens $Cfg.ScreenClock $Screens)[0]; On = [bool]$Cfg.Clock })
+    foreach ($part in 'Bar', 'Dock') {
+        $ats = @(Resolve-OzThemeScreens $Cfg["Screen$part"] $Screens -AllowAll)
+        for ($k = 0; $k -lt $ats.Count; $k++) {
+            $folder = if ($k) { '{0}{1}' -f $part, ($k + 1) } else { $part }
+            $out += [pscustomobject]@{ Part = $part; Config = "OZZYHN\$folder"; Folder = $folder; File = "$part.ini"; At = $ats[$k]; On = [bool]$Cfg[$part]; Copy = $k }
+        }
+    }
+    $out
+}
+
 function New-OzThemeFiles {
     # Every file of the theme as text, by path inside Skins\OZZYHN. Unicode = written as UTF-16
     # (Rainmeter reads that for names with accents); the rest is plain ASCII.
-    param($Cfg, [int]$InkSlot = 2)
+    param($Cfg, [int]$InkSlot = 2, [object[]]$Screens)
+    if ($null -eq $Screens) { $Screens = Get-OzScreens }
+    $copies = @(Get-OzThemeCopies $Cfg $Screens)
     $s = [double]$Cfg.Scale / 100
-    $look = $Oz.ThemeLooks[[string]$Cfg.Look]
-    $place = Get-OzThemePlace $Cfg.Pos $Cfg.MarginX $Cfg.MarginY
+    $look = Get-OzThemeColors $Oz.ThemeLooks[[string]$Cfg.Look] ([string]$Cfg.BgStyle)
+    $clockAt = ($copies | Where-Object Part -EQ 'Clock' | Select-Object -First 1).At
+    $wallsAt = ($copies | Where-Object Part -EQ 'Bar' | Select-Object -First 1).At
+    $place = Get-OzThemePlace $Cfg.Pos $Cfg.MarginX $Cfg.MarginY $clockAt
     $lang = if ($Oz.Lang -eq 'es') { 'es' } else { 'en' }
     $hasBat = [bool]($Oz.Sys -and $Oz.Sys.Battery -and $Oz.Sys.Battery.Present)
     $date = $Oz.ThemeDateFormats[[int]$Cfg.DateFmt].Rm
@@ -5111,11 +5262,21 @@ function New-OzThemeFiles {
     & $line 'FontIcons' 'Segoe MDL2 Assets'
     & $line 'HasBattery' $(if ($hasBat) { 1 } else { 0 })
     & $line 'NoBattery' $(if ($hasBat) { 0 } else { 1 })
+    # status bar items picked on the THEMES page (Show 1 = shown; No is the same the other way round)
+    foreach ($item in $Oz.ThemeBarItems) {
+        $on = @($Cfg.BarItems) -contains $item
+        if ($item -eq 'Bat') { $on = $on -and $hasBat }
+        & $line "Show$item" $(if ($on) { 1 } else { 0 })
+        & $line "No$item" $(if ($on) { 0 } else { 1 })
+    }
+    $barY = [int][math]::Round(8 * $s)
     & $line 'BarX' ([int][math]::Round(12 * $s))
-    & $line 'BarY' ('(#WORKAREAY#+{0})' -f [int][math]::Round(8 * $s))
+    & $line 'BarY' ('(#WORKAREAY#+{0})' -f $barY)
     & $line 'BarZ' $(if ($Cfg.BarOnTop) { 1 } else { -2 })
     & $line 'DockM' ([int][math]::Round(12 * $s))
-    & $line 'WallsY' ('(#WORKAREAY#+{0})' -f [int][math]::Round(64 * $s))
+    # the wallpaper picker opens under the (first) status bar
+    & $line 'WallsX' $(if ($wallsAt) { '(#SCREENAREAX{0}#+#SCREENAREAWIDTH{0}#/2)' -f $wallsAt } else { '50%' })
+    & $line 'WallsY' ('(#WORKAREAY{0}#+{1})' -f $wallsAt, [int][math]::Round(64 * $s))
     & $line 'WallFit' $Cfg.WallFit
     & $line 'WallFolderMain' $(if ($folders.Count) { $folders[0] } else { [Environment]::GetFolderPath('MyPictures') })
     for ($i = 0; $i -lt $folders.Count; $i++) { & $line ('WallFolder{0}' -f ($i + 1)) $folders[$i] }
@@ -5128,10 +5289,23 @@ function New-OzThemeFiles {
     $files['@Resources\State.inc'] = @{ Text = ("[Variables]`r`nInkSlot={0}`r`n" -f $InkSlot); Unicode = $true }
     $files['@Resources\Walls\Index.inc'] = @{ Text = "[Variables]`r`nNeedIndex=1`r`nWallCount=0`r`nWall0=`r`nThumb0=`r`nName0=`r`nTag0=`r`n"; Unicode = $true }
 
-    foreach ($k in $Oz.ThemeTpl.Keys) { $files[$k] = @{ Text = (Expand-OzThemeText $Oz.ThemeTpl[$k] $s); Unicode = $false } }
+    foreach ($k in $Oz.ThemeTpl.Keys) { if ($k -ne 'Bar\Bar.ini') { $files[$k] = @{ Text = (Expand-OzThemeText $Oz.ThemeTpl[$k] $s); Unicode = $false } } }
     foreach ($k in $Oz.ThemeScripts.Keys) { $files[$k] = @{ Text = $Oz.ThemeScripts[$k]; Unicode = $false } }
+    # one bar and one dock file per screen they are shown on; each knows its own screen
+    $barTpl = Expand-OzThemeText $Oz.ThemeTpl['Bar\Bar.ini'] $s
     $dock = @(Get-OzDockApps $Cfg)
-    $files['Dock\Dock.ini'] = @{ Text = (Expand-OzThemeText (New-OzDockIni $dock) $s); Unicode = $true }
+    $iconSize = [int]$Oz.ThemeDockSizes[[string]$Cfg.DockSize]
+    if (-not $iconSize) { $iconSize = 46 }
+    foreach ($c in $copies) {
+        if ($c.Part -eq 'Bar') {
+            $vars = if ($c.At) { "BarCX=(#SCREENAREAX{0}#+#SCREENAREAWIDTH{0}#/2)`r`nBarSW=#SCREENAREAWIDTH{0}#`r`nBarY=(#WORKAREAY{0}#+{1})" -f $c.At, $barY }
+            else { "BarCX=50%`r`nBarSW=#SCREENAREAWIDTH#`r`nBarY=(#WORKAREAY#+{0})" -f $barY }
+            $files[('{0}\Bar.ini' -f $c.Folder)] = @{ Text = $barTpl.Replace('@Include2=#@#Strings.inc', "@Include2=#@#Strings.inc`r`n" + $vars); Unicode = $false }
+        } elseif ($c.Part -eq 'Dock') {
+            $tag = if ($c.Copy) { 'd{0}-' -f ($c.Copy + 1) } else { '' }
+            $files[('{0}\Dock.ini' -f $c.Folder)] = @{ Text = (Expand-OzThemeText (New-OzDockIni $dock -IconSize $iconSize -At $c.At -Tag $tag) $s); Unicode = $true }
+        }
+    }
     $files
 }
 
@@ -5142,8 +5316,9 @@ function Get-OzRainmeter {
     foreach ($k in 'HKLM:\SOFTWARE\WOW6432Node\Rainmeter', 'HKLM:\SOFTWARE\Rainmeter') {
         try { $v = (Get-Item -LiteralPath $k -ErrorAction Stop).GetValue(''); if ($v) { $dirs += [string]$v } } catch { }
     }
-    $proc = @(Get-Process -Name Rainmeter -ErrorAction SilentlyContinue)
-    foreach ($p in $proc) { try { if ($p.Path) { $dirs += (Split-Path -Parent $p.Path) } } catch { } }
+    # .NET's process lookup by name is much faster than Get-Process (this runs each time THEMES opens)
+    $proc = @([Diagnostics.Process]::GetProcessesByName('Rainmeter'))
+    foreach ($p in $proc) { try { $f = $p.MainModule.FileName; if ($f) { $dirs += (Split-Path -Parent $f) } } catch { } }
     $dirs += (Join-Path $env:ProgramFiles 'Rainmeter')
     if (${env:ProgramFiles(x86)}) { $dirs += (Join-Path ${env:ProgramFiles(x86)} 'Rainmeter') }
     foreach ($d in $dirs) {
@@ -5151,7 +5326,7 @@ function Get-OzRainmeter {
     }
     if (-not $r.Exe) { return [pscustomobject]$r }
     $r.Installed = $true
-    try { $r.Version = [string](Get-Item -LiteralPath $r.Exe).VersionInfo.ProductVersion } catch { }
+    try { $r.Version = [string][Diagnostics.FileVersionInfo]::GetVersionInfo($r.Exe).ProductVersion } catch { }
     $r.Running = $proc.Count -gt 0
     $dir = Split-Path -Parent $r.Exe
     # Portable copies keep Rainmeter.ini next to Rainmeter.exe
@@ -5273,66 +5448,142 @@ function New-OzDockShortcuts {
     } finally { [void][Runtime.InteropServices.Marshal]::ReleaseComObject($sh) }
 }
 
+function Get-OzLinLut {
+    # sRGB 0-255 to linear light, worked out once (the same formula the skins' Luma.ps1 uses)
+    if ($Oz.LinLut) { return , $Oz.LinLut }
+    $lut = New-Object 'double[]' 256
+    for ($i = 0; $i -lt 256; $i++) {
+        $c = $i / 255
+        $lut[$i] = if ($c -le 0.04045) { $c / 12.92 } else { [math]::Pow(($c + 0.055) / 1.055, 2.4) }
+    }
+    $Oz.LinLut = $lut
+    , $lut
+}
+
+function Get-OzWallFile {
+    # The picture Windows shows as wallpaper right now ('' for a plain color)
+    $wp = [string][Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\Control Panel\Desktop', 'WallPaper', '')
+    $file = Join-Path $env:APPDATA 'Microsoft\Windows\Themes\TranscodedWallpaper'
+    if (-not $wp) { return '' }
+    if (-not [IO.File]::Exists($file)) { $file = $wp }
+    if ([IO.File]::Exists($file)) { $file } else { '' }
+}
+
+function New-OzWallSmall {
+    # The 384 x 216 copy of the wallpaper the brightness is read from (as the skins' Luma.ps1 does)
+    param([string]$File)
+    Add-Type -AssemblyName System.Drawing
+    $fs = [IO.File]::Open($File, 'Open', 'Read', 'ReadWrite')
+    try {
+        $img = [System.Drawing.Image]::FromStream($fs, $false, $false)
+        $small = New-Object System.Drawing.Bitmap 384, 216
+        $g = [System.Drawing.Graphics]::FromImage($small)
+        $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBilinear
+        $g.DrawImage($img, 0, 0, 384, 216)
+        $g.Dispose(); $img.Dispose()
+    } finally { $fs.Dispose() }
+    $small
+}
+
+function New-OzWallPicture {
+    # The wallpaper as a small WPF picture for the THEMES preview (frozen, so any thread can use it)
+    param([string]$File)
+    $bi = New-Object System.Windows.Media.Imaging.BitmapImage
+    $bi.BeginInit()
+    $bi.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
+    $bi.DecodePixelWidth = 720
+    $bi.StreamSource = New-Object IO.MemoryStream (, [IO.File]::ReadAllBytes($File))
+    $bi.EndInit()
+    $bi.Freeze()
+    $bi
+}
+
+function Start-OzWallPrefetch {
+    # Reads the wallpaper on a background runspace once the window is idle, so the first visit to
+    # THEMES does not wait for a large picture to be decoded (twice) on the window's thread
+    if ($Oz.WallPrefetchWorker -and -not $Oz.WallPrefetchWorker.Handle.IsCompleted) { return }
+    $Oz.WallPrefetchWorker = Start-OzWorker -ScriptBlock {
+        try {
+            $f = Get-OzWallFile
+            if (-not $f) { return }
+            $key = '{0}|{1}' -f $f, [IO.File]::GetLastWriteTimeUtc($f).Ticks
+            if ($Oz.WallPrefetch -and $Oz.WallPrefetch.Key -eq $key) { return }
+            $Oz.WallPrefetch = @{ Key = $key; Small = (New-OzWallSmall $f); Image = (New-OzWallPicture $f) }
+        } catch { }
+    }
+}
+
 function Get-OzWallLuma {
     # Same reading as the skins' Luma.ps1: brightness (0-1) and the best text color (0 dark, 1 mid, 2 light)
     # for the part of the wallpaper at Cx, Cy. Used for the preview and the first color after APPLY.
+    # On the window's thread the small copy of the wallpaper and each reading (per position and area)
+    # are kept, so the preview follows a click at once; the pixels are read in one block, not one by one.
     param($Cfg)
     $place = Get-OzThemePlace $Cfg.Pos $Cfg.MarginX $Cfg.MarginY
     $res = [pscustomobject]@{ Slot = 2; Brightness = 0.0; File = '' }
     try {
-        $wp = [string](Get-ItemProperty -LiteralPath 'HKCU:\Control Panel\Desktop' -ErrorAction SilentlyContinue).WallPaper
-        $file = Join-Path $env:APPDATA 'Microsoft\Windows\Themes\TranscodedWallpaper'
-        if (-not $wp) { $file = '' } elseif (-not [IO.File]::Exists($file)) { $file = $wp }
-        $lin = { param([double]$c) $c = $c / 255; if ($c -le 0.04045) { $c / 12.92 } else { [math]::Pow(($c + 0.055) / 1.055, 2.4) } }
-        $sumY = 0.0; $sumB = 0.0; $n = 0
+        $file = Get-OzWallFile
+        $Y = 0.0; $B = 0.0
         if ($file -and [IO.File]::Exists($file)) {
             $res.File = $file
             Add-Type -AssemblyName System.Drawing
-            # A 384 x 216 copy of the wallpaper is kept between calls on the window's thread, so the
-            # preview follows each click without decoding the full picture again
             $key = '{0}|{1}' -f $file, ([IO.File]::GetLastWriteTimeUtc($file).Ticks)
-            $small = $null
-            if (-not $OzWorker -and $Oz.ThemeLumaKey -eq $key -and $Oz.ThemeLumaSmall) { $small = $Oz.ThemeLumaSmall }
-            else {
-                $fs = [IO.File]::Open($file, 'Open', 'Read', 'ReadWrite')
-                try {
-                    $img = [System.Drawing.Image]::FromStream($fs, $false, $false)
-                    $small = New-Object System.Drawing.Bitmap 384, 216
-                    $g = [System.Drawing.Graphics]::FromImage($small)
-                    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBilinear
-                    $g.DrawImage($img, 0, 0, 384, 216)
-                    $g.Dispose(); $img.Dispose()
-                } finally { $fs.Dispose() }
-                if (-not $OzWorker) {
+            $readKey = '{0}|{1}|{2}|{3}' -f $key, $place.Cx, $place.Cy, $Cfg.InkRegion
+            if (-not $OzWorker -and $Oz.ThemeLumaReads -and $Oz.ThemeLumaReads.ContainsKey($readKey)) {
+                $Y = $Oz.ThemeLumaReads[$readKey][0]; $B = $Oz.ThemeLumaReads[$readKey][1]
+            } else {
+                # A 384 x 216 copy of the wallpaper is kept between calls on the window's thread
+                $small = $null
+                $pre = $Oz.WallPrefetch
+                if (-not $OzWorker -and $Oz.ThemeLumaKey -eq $key -and $Oz.ThemeLumaSmall) { $small = $Oz.ThemeLumaSmall }
+                elseif (-not $OzWorker -and $pre -and $pre.Key -eq $key -and $pre.Small) {
+                    # read in the background after startup (Start-OzWallPrefetch)
+                    $small = $pre.Small; $pre.Small = $null
                     if ($Oz.ThemeLumaSmall) { try { $Oz.ThemeLumaSmall.Dispose() } catch { } }
-                    $Oz.ThemeLumaSmall = $small; $Oz.ThemeLumaKey = $key
+                    $Oz.ThemeLumaSmall = $small; $Oz.ThemeLumaKey = $key; $Oz.ThemeLumaReads = @{}
+                } else {
+                    $small = New-OzWallSmall $file
+                    if (-not $OzWorker) {
+                        if ($Oz.ThemeLumaSmall) { try { $Oz.ThemeLumaSmall.Dispose() } catch { } }
+                        $Oz.ThemeLumaSmall = $small; $Oz.ThemeLumaKey = $key; $Oz.ThemeLumaReads = @{}
+                    }
                 }
-            }
-            $rw = [math]::Max(1, [int](384 * $Cfg.InkRegion / 100)); $rh = [math]::Max(1, [int](216 * $Cfg.InkRegion / 100))
-            $x0 = [int][math]::Min([math]::Max(0, 384 * [double]$place.Cx - $rw / 2), 384 - $rw)
-            $y0 = [int][math]::Min([math]::Max(0, 216 * [double]$place.Cy - $rh / 2), 216 - $rh)
-            $bmp = New-Object System.Drawing.Bitmap 24, 24
-            $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBilinear
-            $g.DrawImage($small, (New-Object System.Drawing.Rectangle 0, 0, 24, 24), (New-Object System.Drawing.Rectangle $x0, $y0, $rw, $rh), [System.Drawing.GraphicsUnit]::Pixel)
-            $g.Dispose()
-            if ($OzWorker) { $small.Dispose() }
-            for ($x = 0; $x -lt 24; $x++) {
+                $rw = [math]::Max(1, [int](384 * $Cfg.InkRegion / 100)); $rh = [math]::Max(1, [int](216 * $Cfg.InkRegion / 100))
+                $x0 = [int][math]::Min([math]::Max(0, 384 * [double]$place.Cx - $rw / 2), 384 - $rw)
+                $y0 = [int][math]::Min([math]::Max(0, 216 * [double]$place.Cy - $rh / 2), 216 - $rh)
+                $bmp = New-Object System.Drawing.Bitmap 24, 24
+                $g = [System.Drawing.Graphics]::FromImage($bmp)
+                $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBilinear
+                $g.DrawImage($small, (New-Object System.Drawing.Rectangle 0, 0, 24, 24), (New-Object System.Drawing.Rectangle $x0, $y0, $rw, $rh), [System.Drawing.GraphicsUnit]::Pixel)
+                $g.Dispose()
+                if ($OzWorker) { $small.Dispose() }
+                # the 24 x 24 pixels in one copy (BGRA), instead of 576 GetPixel calls
+                $data = $bmp.LockBits((New-Object System.Drawing.Rectangle 0, 0, 24, 24), [System.Drawing.Imaging.ImageLockMode]::ReadOnly, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+                try {
+                    $stride = $data.Stride
+                    $buf = New-Object 'byte[]' ($stride * 24)
+                    [Runtime.InteropServices.Marshal]::Copy($data.Scan0, $buf, 0, $buf.Length)
+                } finally { $bmp.UnlockBits($data); $bmp.Dispose() }
+                $lut = Get-OzLinLut
+                $sumY = 0.0; $sumB = 0.0
                 for ($y = 0; $y -lt 24; $y++) {
-                    $p = $bmp.GetPixel($x, $y)
-                    $sumY += 0.2126 * (& $lin $p.R) + 0.7152 * (& $lin $p.G) + 0.0722 * (& $lin $p.B)
-                    $sumB += (0.2126 * $p.R + 0.7152 * $p.G + 0.0722 * $p.B) / 255
-                    $n++
+                    $i = $y * $stride
+                    for ($x = 0; $x -lt 24; $x++) {
+                        $b0 = $buf[$i]; $g0 = $buf[$i + 1]; $r0 = $buf[$i + 2]
+                        $sumY += 0.2126 * $lut[$r0] + 0.7152 * $lut[$g0] + 0.0722 * $lut[$b0]
+                        $sumB += 0.2126 * $r0 + 0.7152 * $g0 + 0.0722 * $b0
+                        $i += 4
+                    }
                 }
+                $Y = $sumY / 576; $B = $sumB / 255 / 576
+                if (-not $OzWorker -and $Oz.ThemeLumaReads) { $Oz.ThemeLumaReads[$readKey] = @($Y, $B) }
             }
-            $bmp.Dispose()
         } else {
+            $lin = { param([double]$c) $c = $c / 255; if ($c -le 0.04045) { $c / 12.92 } else { [math]::Pow(($c + 0.055) / 1.055, 2.4) } }
             $c = @(([string](Get-ItemProperty -LiteralPath 'HKCU:\Control Panel\Colors' -ErrorAction Stop).Background).Trim() -split '\s+' | ForEach-Object { [double]$_ })
-            $sumY = 0.2126 * (& $lin $c[0]) + 0.7152 * (& $lin $c[1]) + 0.0722 * (& $lin $c[2])
-            $sumB = (0.2126 * $c[0] + 0.7152 * $c[1] + 0.0722 * $c[2]) / 255
-            $n = 1
+            $Y = 0.2126 * (& $lin $c[0]) + 0.7152 * (& $lin $c[1]) + 0.0722 * (& $lin $c[2])
+            $B = (0.2126 * $c[0] + 0.7152 * $c[1] + 0.0722 * $c[2]) / 255
         }
-        $Y = $sumY / $n; $B = $sumB / $n
         $res.Brightness = $B
         if ($Cfg.InkMode -eq 'threshold') {
             $res.Slot = if ($B -lt $Cfg.InkDarkTh) { 2 } elseif ($B -gt $Cfg.InkLightTh) { 0 } else { 1 }
@@ -5356,7 +5607,8 @@ function Install-OzTheme {
     if (-not $rm.Installed) { throw (T 'Rainmeter is not installed. Press GET RAINMETER, install it, then try again.') }
     $root = Join-Path $rm.SkinPath 'OZZYHN'
     $ink = Get-OzWallLuma $Cfg
-    $files = New-OzThemeFiles -Cfg $Cfg -InkSlot $ink.Slot
+    $screens = Get-OzScreens
+    $files = New-OzThemeFiles -Cfg $Cfg -InkSlot $ink.Slot -Screens $screens
     foreach ($k in $files.Keys) { Write-OzThemeFile -Path (Join-Path $root $k) -Text $files[$k].Text -Unicode $files[$k].Unicode }
     foreach ($d in 'Dock\Icons', 'Walls\Cache') {
         $p = Join-Path $root "@Resources\$d"
@@ -5375,7 +5627,10 @@ function Install-OzTheme {
     Send-OzRainmeterBang $rm '!RefreshApp'
     Start-Sleep -Milliseconds 1500
     $rm = Get-OzRainmeter
-    $want = [ordered]@{ 'OZZYHN\Clock' = $(if ($Cfg.Clock) { "$($Cfg.Style).ini" }); 'OZZYHN\Bar' = $(if ($Cfg.Bar) { 'Bar.ini' }); 'OZZYHN\Dock' = $(if ($Cfg.Dock) { 'Dock.ini' }) }
+    # every copy to show (a bar and a dock per screen picked), and copies from before that are not used now
+    $want = [ordered]@{}
+    foreach ($c in @(Get-OzThemeCopies $Cfg $screens)) { $want[$c.Config] = $(if ($c.On) { $c.File } else { $null }) }
+    foreach ($c in @($rm.Active.Keys)) { if ($c -match '^OZZYHN\\(Bar|Dock)\d+$' -and -not $want.Contains($c)) { $want[$c] = $null } }
     $clockNow = Get-OzActiveClockStyle $rm
     foreach ($c in $want.Keys) {
         if ($want[$c]) {
@@ -8769,6 +9024,156 @@ Explorador de archivos
 
 Settings
 Configuraci&oacute;n
+
+Looking for games...
+Buscando juegos...
+
+SCREEN {0} (MAIN)
+PANTALLA {0} (PRINCIPAL)
+
+SCREEN {0}
+PANTALLA {0}
+
+SCREEN {0} (NOT CONNECTED)
+PANTALLA {0} (NO CONECTADA)
+
+Until it is connected again, this part goes on the main screen.
+Hasta que vuelva a estar conectada, esta parte va en la pantalla principal.
+
+ALL SCREENS
+TODAS LAS PANTALLAS
+
+One copy on every screen.
+Una copia en cada pantalla.
+
+The screen the clock and its wallpaper colors are on.
+La pantalla del reloj y de los colores de su fondo.
+
+The wallpaper picker opens under it.
+El selector de fondos se abre debajo de ella.
+
+Your apps, at the bottom of this screen.
+Tus apps, abajo en esta pantalla.
+
+Only one screen is connected now. Connect another one and press CHECK AGAIN to pick it.
+Ahora solo hay una pantalla conectada. Conecta otra y pulsa VOLVER A COMPROBAR para elegirla.
+
+BAR
+BARRA
+
+DOCK
+DOCK
+
+CENTER
+CENTRO
+
+Date and time
+Fecha y hora
+
+Volume
+Volumen
+
+Battery
+Bater&iacute;a
+
+Status bar shows
+La barra de estado muestra
+
+Tick each pill you want. The settings button is always there.
+Marca cada elemento que quieras ver. El bot&oacute;n de configuraci&oacute;n siempre est&aacute;.
+
+SMALL
+PEQUE&Ntilde;O
+
+MEDIUM
+MEDIANO
+
+LARGE
+GRANDE
+
+Dock icon size
+Tama&ntilde;o de los iconos del dock
+
+Bigger icons are easier to hit on large screens.
+Los iconos grandes son m&aacute;s f&aacute;ciles de pulsar en pantallas grandes.
+
+GLASS
+CRISTAL
+
+More of the wallpaper shows through.
+Se ve m&aacute;s el fondo a trav&eacute;s.
+
+NORMAL
+NORMAL
+
+The look as designed.
+El aspecto tal como se dise&ntilde;&oacute;.
+
+SOLID
+S&Oacute;LIDO
+
+No see-through: easiest to read on busy wallpapers.
+Sin transparencia: lo m&aacute;s f&aacute;cil de leer sobre fondos recargados.
+
+Background
+Fondo
+
+How see-through the status bar, the dock and the wallpaper picker are.
+Cu&aacute;nto se transparentan la barra de estado, el dock y el selector de fondos.
+
+FILL
+RELLENAR
+
+Covers the screen, cutting the edges if needed.
+Cubre la pantalla y recorta los bordes si hace falta.
+
+FIT
+AJUSTAR
+
+Shows the whole picture, with bars if needed.
+Muestra la imagen entera, con bandas si hace falta.
+
+STRETCH
+EXPANDIR
+
+Stretches the picture to the screen.
+Estira la imagen hasta llenar la pantalla.
+
+Original size in the middle.
+Tama&ntilde;o original en el centro.
+
+SPAN
+DISTRIBUIR
+
+One picture across all screens.
+Una sola imagen a lo largo de todas las pantallas.
+
+Shown: {0}, the clock screen.
+Se muestra: {0}, la pantalla del reloj.
+
+SCREENS
+PANTALLAS
+
+IDENTIFY
+IDENTIFICAR
+
+Shows the number of each screen on it for a few seconds
+Muestra el n&uacute;mero de cada pantalla en ella durante unos segundos
+
+Pick the screen for each part of the theme. The status bar and the dock can also go on every screen. IDENTIFY shows the number of each screen on it.
+Elige la pantalla de cada parte del tema. La barra de estado y el dock tambi&eacute;n pueden ir en todas las pantallas. IDENTIFICAR muestra el n&uacute;mero de cada pantalla en ella.
+
+STATUS BAR AND DOCK
+BARRA DE ESTADO Y DOCK
+
+Choose what the status bar shows, how big the dock icons are and how see-through both are.
+Elige qu&eacute; muestra la barra de estado, el tama&ntilde;o de los iconos del dock y cu&aacute;nto se transparentan.
+
+PICTURE FIT
+AJUSTE DE LA IMAGEN
+
+{0} screen(s) connected.
+{0} pantalla(s) conectada(s).
 '@
 #endregion
 
@@ -9713,6 +10118,33 @@ $Oz.Xaml = @'
                                         <StackPanel x:Name="ThemeClockPanel"/>
                                     </StackPanel>
                                 </Border>
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,4">
+                                            <TextBlock Text="SCREENS" Style="{StaticResource H2}" VerticalAlignment="Center"/>
+                                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                                <Button x:Name="BtnScreenIdentify" Style="{StaticResource NeonViolet}" Content="IDENTIFY" Margin="0,0,8,0" ToolTip="Shows the number of each screen on it for a few seconds"/>
+                                                <Button x:Name="BtnScreenCheck" Style="{StaticResource Neon}" Content="CHECK AGAIN" Margin="0"/>
+                                            </StackPanel>
+                                        </Grid>
+                                        <TextBlock Style="{StaticResource Body}" Margin="0,4,0,10" Text="Pick the screen for each part of the theme. The status bar and the dock can also go on every screen. IDENTIFY shows the number of each screen on it."/>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border x:Name="ThemeScreenMap" Width="230" Height="132" Margin="0,0,14,6" VerticalAlignment="Top" CornerRadius="10" Background="#0B0D12" BorderBrush="#2A00E5FF" BorderThickness="1" ClipToBounds="True"/>
+                                            <StackPanel x:Name="ThemeScreenPanel" Grid.Column="1"/>
+                                        </Grid>
+                                    </StackPanel>
+                                </Border>
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <TextBlock Text="STATUS BAR AND DOCK" Style="{StaticResource H2}"/>
+                                        <TextBlock Style="{StaticResource Body}" Margin="0,4,0,10" Text="Choose what the status bar shows, how big the dock icons are and how see-through both are."/>
+                                        <StackPanel x:Name="ThemeBarDockPanel"/>
+                                    </StackPanel>
+                                </Border>
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
@@ -9723,6 +10155,8 @@ $Oz.Xaml = @'
                                             <TextBlock Text="WALLPAPERS" Style="{StaticResource H2}"/>
                                             <TextBlock Style="{StaticResource Body}" Margin="0,4,0,10" Text="The picker (left button of the status bar) shows the pictures in these folders, sorted by color. CREATE OZZYHN WALLPAPERS draws six original wallpapers for this theme."/>
                                             <StackPanel x:Name="ThemeWallPanel" Margin="0,0,0,6"/>
+                                            <TextBlock Text="PICTURE FIT" Style="{StaticResource Label}" Margin="0,4,0,6"/>
+                                            <StackPanel x:Name="ThemeWallFitPanel" Margin="0,0,0,8"/>
                                             <WrapPanel>
                                                 <Button x:Name="BtnWallMake" Style="{StaticResource NeonViolet}" Content="CREATE OZZYHN WALLPAPERS" Margin="0,0,8,8"/>
                                                 <Button x:Name="BtnWallAdd" Style="{StaticResource Neon}" Content="ADD FOLDER" Margin="0,0,8,8"/>
@@ -9985,19 +10419,29 @@ $Oz.Xaml = @'
                         <ProgressBar x:Name="ApplyProgress" Style="{StaticResource Meter}" Height="4" Visibility="Collapsed"/>
                         <Grid x:Name="BusyBar" Height="4" ClipToBounds="True" Visibility="Collapsed">
                             <Border CornerRadius="2" Background="#16FFFFFF"/>
+                            <!-- runs only while the bar is shown, so an idle window draws nothing -->
                             <Rectangle Width="70" HorizontalAlignment="Left" RadiusX="2" RadiusY="2" Fill="{StaticResource NeonGrad}">
                                 <Rectangle.RenderTransform>
                                     <TranslateTransform/>
                                 </Rectangle.RenderTransform>
-                                <Rectangle.Triggers>
-                                    <EventTrigger RoutedEvent="FrameworkElement.Loaded">
-                                        <BeginStoryboard>
-                                            <Storyboard RepeatBehavior="Forever" Timeline.DesiredFrameRate="30">
-                                                <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)" From="-70" To="220" Duration="0:0:1.2"/>
-                                            </Storyboard>
-                                        </BeginStoryboard>
-                                    </EventTrigger>
-                                </Rectangle.Triggers>
+                                <Rectangle.Style>
+                                    <Style TargetType="Rectangle">
+                                        <Style.Triggers>
+                                            <Trigger Property="IsVisible" Value="True">
+                                                <Trigger.EnterActions>
+                                                    <BeginStoryboard Name="BusyRun">
+                                                        <Storyboard RepeatBehavior="Forever" Timeline.DesiredFrameRate="30">
+                                                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)" From="-70" To="220" Duration="0:0:1.2"/>
+                                                        </Storyboard>
+                                                    </BeginStoryboard>
+                                                </Trigger.EnterActions>
+                                                <Trigger.ExitActions>
+                                                    <StopStoryboard BeginStoryboardName="BusyRun"/>
+                                                </Trigger.ExitActions>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </Rectangle.Style>
                             </Rectangle>
                         </Grid>
                     </Grid>
@@ -10012,25 +10456,44 @@ $Oz.Xaml = @'
 #endregion
 
 #region ============================ UI PRIMITIVES ============================
+# These helpers build almost every control the app draws in code, so they are kept lean: Windows
+# PowerShell is slow at New-Object, pipelines and resource lookups, and the window cannot answer
+# clicks while they run. Brushes, margins, fonts and styles are made once and reused.
 $Oz.BrushCache = @{}
+$Oz.ThickCache = @{}
+$Oz.ResCache = @{}
 function Get-OzBrush {
     param([string]$Hex)
-    if (-not $Oz.BrushCache.ContainsKey($Hex)) {
-        $b = (New-Object System.Windows.Media.BrushConverter).ConvertFromString($Hex)
-        $b.Freeze()
-        $Oz.BrushCache[$Hex] = $b
-    }
-    $Oz.BrushCache[$Hex]
+    $b = $Oz.BrushCache[$Hex]
+    if ($null -ne $b) { return $b }
+    $b = ([System.Windows.Media.BrushConverter]::new()).ConvertFromString($Hex)
+    $b.Freeze()
+    $Oz.BrushCache[$Hex] = $b
+    $b
+}
+
+function Get-OzRes {
+    # A style, font or brush from the window's resources, looked up once
+    param([string]$Key)
+    $r = $Oz.ResCache[$Key]
+    if ($null -ne $r) { return $r }
+    $r = $Oz.Window.FindResource($Key)
+    $Oz.ResCache[$Key] = $r
+    $r
 }
 
 function New-OzThickness {
     param([string]$Spec)
-    $p = @($Spec -split ',' | ForEach-Object { [double]$_ })
-    switch ($p.Count) {
-        1 { New-Object System.Windows.Thickness($p[0]) }
-        2 { New-Object System.Windows.Thickness($p[0], $p[1], $p[0], $p[1]) }
-        default { New-Object System.Windows.Thickness($p[0], $p[1], $p[2], $p[3]) }
+    $t = $Oz.ThickCache[$Spec]
+    if ($null -ne $t) { return $t }
+    $p = [double[]]($Spec.Split(','))
+    $t = switch ($p.Count) {
+        1 { [System.Windows.Thickness]::new($p[0]) }
+        2 { [System.Windows.Thickness]::new($p[0], $p[1], $p[0], $p[1]) }
+        default { [System.Windows.Thickness]::new($p[0], $p[1], $p[2], $p[3]) }
     }
+    $Oz.ThickCache[$Spec] = $t
+    $t
 }
 
 function New-OzText {
@@ -10038,40 +10501,39 @@ function New-OzText {
         [string]$Text, [double]$Size = 12.5, [string]$Color = '#8A9BBF', [string]$Margin = '0',
         [switch]$Bold, [switch]$Semi, [switch]$Display, [switch]$Mono, [switch]$Icon, [switch]$Wrap
     )
-    $t = New-Object System.Windows.Controls.TextBlock
+    $t = [System.Windows.Controls.TextBlock]::new()
     $t.Text = $Text
     $t.FontSize = $Size
     $t.Foreground = Get-OzBrush $Color
-    $t.Margin = New-OzThickness $Margin
+    if ($Margin -ne '0') { $t.Margin = New-OzThickness $Margin }
     if ($Bold) { $t.FontWeight = [System.Windows.FontWeights]::Bold }
     if ($Semi) { $t.FontWeight = [System.Windows.FontWeights]::SemiBold }
-    if ($Display) { $t.FontFamily = $Oz.Window.FindResource('Display') }
-    if ($Mono) { $t.FontFamily = $Oz.Window.FindResource('Mono') }
-    if ($Icon) { $t.FontFamily = $Oz.Window.FindResource('Icons') }
+    if ($Display) { $t.FontFamily = Get-OzRes 'Display' }
+    if ($Mono) { $t.FontFamily = Get-OzRes 'Mono' }
+    if ($Icon) { $t.FontFamily = Get-OzRes 'Icons' }
     if ($Wrap) { $t.TextWrapping = [System.Windows.TextWrapping]::Wrap }
     $t
 }
 
 function New-OzBadge {
     param([string]$Text, [string]$Color)
-    $b = New-Object System.Windows.Controls.Border
-    $b.CornerRadius = New-Object System.Windows.CornerRadius(8)
+    $b = [System.Windows.Controls.Border]::new()
+    $b.CornerRadius = [System.Windows.CornerRadius]::new(8)
     $b.Padding = New-OzThickness '7,1,7,1'
     $b.Margin = New-OzThickness '6,0,0,0'
     $b.BorderThickness = New-OzThickness '1'
     $b.BorderBrush = Get-OzBrush ('#66' + $Color.TrimStart('#'))
     $b.Background = Get-OzBrush ('#14' + $Color.TrimStart('#'))
     $b.VerticalAlignment = 'Center'
-    $tx = New-OzText -Text $Text -Size 10 -Color $Color -Display -Semi
-    $b.Child = $tx
+    $b.Child = New-OzText -Text $Text -Size 10 -Color $Color -Display -Semi
     $b
 }
 
 function New-OzButton {
     param([string]$Text, [string]$Style = 'Neon', $Tag, [string]$Margin = '0,0,8,0')
-    $b = New-Object System.Windows.Controls.Button
+    $b = [System.Windows.Controls.Button]::new()
     $b.Content = $Text
-    $b.Style = $Oz.Window.FindResource($Style)
+    $b.Style = Get-OzRes $Style
     $b.Tag = $Tag
     $b.Margin = New-OzThickness $Margin
     $b
@@ -10079,80 +10541,115 @@ function New-OzButton {
 
 function New-OzRowBorder {
     param([string]$Margin = '0,0,0,8', [string]$Padding = '14,10,14,10')
-    $b = New-Object System.Windows.Controls.Border
+    $b = [System.Windows.Controls.Border]::new()
     $b.Background = Get-OzBrush '#990B1324'
     $b.BorderBrush = Get-OzBrush '#16233D'
     $b.BorderThickness = New-OzThickness '1'
-    $b.CornerRadius = New-Object System.Windows.CornerRadius(10)
+    $b.CornerRadius = [System.Windows.CornerRadius]::new(10)
     $b.Padding = New-OzThickness $Padding
     $b.Margin = New-OzThickness $Margin
     $b
 }
 
 function New-OzCard {
-    $b = New-Object System.Windows.Controls.Border
-    $b.Style = $Oz.Window.FindResource('Card')
+    $b = [System.Windows.Controls.Border]::new()
+    $b.Style = Get-OzRes 'Card'
     $b
 }
 
 function Add-OzGridChild {
     param($Grid, $Child, [int]$Column = 0, [int]$Row = 0)
-    [System.Windows.Controls.Grid]::SetColumn($Child, $Column)
-    [System.Windows.Controls.Grid]::SetRow($Child, $Row)
+    if ($Column) { [System.Windows.Controls.Grid]::SetColumn($Child, $Column) }
+    if ($Row) { [System.Windows.Controls.Grid]::SetRow($Child, $Row) }
     [void]$Grid.Children.Add($Child)
 }
 
 function New-OzColumns {
     param([string[]]$Widths)
-    $g = New-Object System.Windows.Controls.Grid
+    $g = [System.Windows.Controls.Grid]::new()
     foreach ($w in $Widths) {
-        $c = New-Object System.Windows.Controls.ColumnDefinition
+        $c = [System.Windows.Controls.ColumnDefinition]::new()
         $c.Width = if ($w -eq 'Auto') { [System.Windows.GridLength]::Auto }
-        elseif ($w -eq '*') { New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star) }
-        else { New-Object System.Windows.GridLength([double]$w) }
+        elseif ($w -eq '*') { [System.Windows.GridLength]::new(1, [System.Windows.GridUnitType]::Star) }
+        else { [System.Windows.GridLength]::new([double]$w) }
         [void]$g.ColumnDefinitions.Add($c)
     }
     $g
 }
 
 function Show-OzPage {
+    # The page appears at once. What it has to read or build runs right after it has been drawn,
+    # so a click in the menu never waits for a scan or for a list to be filled.
     param([string]$Name)
     foreach ($p in 'Dash', 'Tweaks', 'Profiles', 'Games', 'Themes', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log') {
         $el = $Oz.UI["Page$p"]
-        if ($el) { $el.Visibility = $(if ($p -eq $Name) { 'Visible' } else { 'Collapsed' }) }
+        if ($el) {
+            $v = if ($p -eq $Name) { 'Visible' } else { 'Collapsed' }
+            if ($el.Visibility -ne $v) { $el.Visibility = $v }
+        }
     }
     $Oz.LiveWanted = ($Name -eq 'Dash')
-    if ($Name -eq 'Tools' -and -not $Oz.ToolsShown -and $Oz.Sys) { $Oz.ToolsShown = $true; Initialize-OzTools }
-    if ($Name -eq 'Drivers' -and -not $Oz.DriversShown -and $Oz.Sys -and -not $Oz.Busy) {
-        $Oz.DriversShown = $true
-        Show-OzDriverRecs
-        Invoke-OzSafe 'Driver scan' { Show-OzDriverScan (Get-OzDriverScan) }
-    }
-    if ($Name -eq 'Debloat' -and -not $Oz.BloatShown -and $Oz.Sys -and -not $Oz.Busy) {
-        $Oz.BloatShown = $true
-        Invoke-OzSafe 'App scan' { Show-OzBloat (Get-OzInstalledBloat) }
-    }
-    if ($Name -eq 'Backup') { Update-OzJournalView }
-    if ($Name -eq 'Themes' -and -not $Oz.ThemesShown) {
-        try { Show-OzThemes } catch { Write-OzLog ((T '{0} failed: {1}') -f (T 'Themes'), $_.Exception.Message) 'ERR' }
-    } elseif ($Name -eq 'Themes') {
-        try { Update-OzThemeStatus; Update-OzThemePreview } catch { Write-OzLog ((T '{0} failed: {1}') -f (T 'Themes'), $_.Exception.Message) 'ERR' }
-    }
-    if ($Name -eq 'Games' -and -not $Oz.GamesShown -and $Oz.Sys -and -not $Oz.Busy) {
-        $Oz.GamesShown = $true
-        Invoke-OzSafe 'Game scan' { Show-OzGames (Get-OzGameScan) }
-    }
+    $Oz.PageWanted = $Name
+    Request-OzPageFill
+}
+
+function Request-OzPageFill {
+    # Queues Invoke-OzPageFill behind the drawing of the page (several clicks in a row queue it once)
+    if ($Oz.PageFillQueued -or -not $Oz.Window) { return }
+    $Oz.PageFillQueued = $true
+    [void]$Oz.Window.Dispatcher.BeginInvoke([Action] { $Oz.PageFillQueued = $false; Invoke-OzPageFill }, [System.Windows.Threading.DispatcherPriority]::Background)
+}
+
+function Invoke-OzPageFill {
+    # Fills the page that is on screen. A page that needs the hardware scan or a scan of its own
+    # while other work is running is filled as soon as that work ends ($Oz.PageRetry).
+    $Name = [string]$Oz.PageWanted
+    $page = $Oz.UI["Page$Name"]
+    if (-not $page -or $page.Visibility -ne 'Visible') { return }
+    $Oz.PageRetry = $false
+    try {
+        switch ($Name) {
+            'Tools' {
+                if ($Oz.ToolsShown) { break }
+                if (-not $Oz.Sys) { $Oz.PageRetry = $true; break }
+                $Oz.ToolsShown = $true
+                Initialize-OzTools
+            }
+            'Backup' { Update-OzJournalView }
+            'Themes' {
+                if (-not $Oz.ThemesShown) { Show-OzThemes }
+                else {
+                    Update-OzThemeStatus
+                    # a screen plugged in or out since last time
+                    $scr = @(Get-OzScreens)
+                    if ((($scr | ForEach-Object { '{0}:{1}x{2}@{3},{4}' -f $_.N, $_.W, $_.H, $_.X, $_.Y }) -join ' ') -ne (($Oz.ThemeScreens | ForEach-Object { '{0}:{1}x{2}@{3},{4}' -f $_.N, $_.W, $_.H, $_.X, $_.Y }) -join ' ')) {
+                        $Oz.ThemeScreens = $scr
+                        Show-OzThemeScreens
+                    }
+                    Request-OzThemePreview
+                }
+            }
+            { $_ -in 'Drivers', 'Debloat', 'Games' } {
+                $flag = @{ Drivers = 'DriversShown'; Debloat = 'BloatShown'; Games = 'GamesShown' }[$Name]
+                if ($Oz[$flag]) { break }
+                if (-not $Oz.Sys -or $Oz.Busy) { $Oz.PageRetry = $true; break }
+                $Oz[$flag] = $true
+                switch ($Name) {
+                    'Drivers' { Show-OzDriverRecs; Invoke-OzSafe 'Driver scan' { Show-OzDriverScan (Get-OzDriverScan) } }
+                    'Debloat' { Invoke-OzSafe 'App scan' { Show-OzBloat (Get-OzInstalledBloat) } }
+                    'Games' { Invoke-OzSafe 'Game scan' { Show-OzGames (Get-OzGameScan -Background) } }
+                }
+            }
+        }
+    } catch { Write-OzLog ((T '{0} failed: {1}') -f (T $Name), $_.Exception.Message) 'ERR' }
 }
 
 function Remove-OzAccents {
     # "telemetria" finds "telemetria" with or without the accent
     param([string]$Text)
-    $d = $Text.Normalize([Text.NormalizationForm]::FormD)
-    $sb = New-Object System.Text.StringBuilder
-    foreach ($c in $d.ToCharArray()) {
-        if ([Globalization.CharUnicodeInfo]::GetUnicodeCategory($c) -ne [Globalization.UnicodeCategory]::NonSpacingMark) { [void]$sb.Append($c) }
-    }
-    $sb.ToString().ToLowerInvariant()
+    if (-not $Text) { return '' }
+    # one regex call instead of a loop over every letter (this runs for all 169 tweak rows)
+    ([regex]::Replace($Text.Normalize([Text.NormalizationForm]::FormD), '\p{Mn}+', '')).ToLowerInvariant()
 }
 
 function Get-OzBothLang {
@@ -10171,10 +10668,10 @@ function Set-OzWindowIcon {
         $dc = $dv.RenderOpen()
         $dc.DrawRoundedRectangle((Get-OzBrush '#05070D'), $null, (New-Object System.Windows.Rect(0, 0, 64, 64)), 14, 14)
         $dc.PushTransform((New-Object System.Windows.Media.ScaleTransform(0.64, 0.64)))
-        $pen = New-Object System.Windows.Media.Pen($Oz.Window.FindResource('NeonGrad'), 8)
+        $pen = New-Object System.Windows.Media.Pen((Get-OzRes 'NeonGrad'), 8)
         $pen.LineJoin = 'Round'
-        $dc.DrawGeometry((Get-OzBrush '#2200E5FF'), $pen, $Oz.Window.FindResource('OzHex'))
-        $dc.DrawGeometry((Get-OzBrush '#E6F1FF'), $null, $Oz.Window.FindResource('OzMark'))
+        $dc.DrawGeometry((Get-OzBrush '#2200E5FF'), $pen, (Get-OzRes 'OzHex'))
+        $dc.DrawGeometry((Get-OzBrush '#E6F1FF'), $null, (Get-OzRes 'OzMark'))
         $dc.Pop()
         $dc.Close()
         $bmp = New-Object System.Windows.Media.Imaging.RenderTargetBitmap(64, 64, 96, 96, [System.Windows.Media.PixelFormats]::Pbgra32)
@@ -10226,19 +10723,19 @@ function Show-OzDialog {
     $dlg.Tag = $last
     $dlg.Add_MouseLeftButtonDown({ try { $this.DragMove() } catch { } })
 
-    $outer = New-Object System.Windows.Controls.Border
+    $outer = [System.Windows.Controls.Border]::new()
     $outer.BorderBrush = Get-OzBrush ('#99' + $accent.TrimStart('#'))
     $outer.BorderThickness = New-OzThickness '1'
     $grid = New-OzColumns @('Auto', '*')
-    $bar = New-Object System.Windows.Controls.Border
+    $bar = [System.Windows.Controls.Border]::new()
     $bar.Width = 4
     $bar.Background = Get-OzBrush $accent
     Add-OzGridChild $grid $bar 0
-    $sp = New-Object System.Windows.Controls.StackPanel
+    $sp = [System.Windows.Controls.StackPanel]::new()
     $sp.Margin = New-OzThickness '22,18,24,18'
     $sp.MinWidth = 360
     $sp.MaxWidth = 540
-    $head = New-Object System.Windows.Controls.StackPanel
+    $head = [System.Windows.Controls.StackPanel]::new()
     $head.Orientation = 'Horizontal'
     $gi = New-OzText -Text ([string]$glyph) -Size 18 -Color $accent -Icon -Margin '0,0,10,0'
     $gi.VerticalAlignment = 'Center'
@@ -10257,7 +10754,7 @@ function Show-OzDialog {
         Add-OzGridChild $line (New-OzText -Text ([string]$r.Text) -Size 13 -Color $color -Wrap) 1
         [void]$sp.Children.Add($line)
     }
-    $btns = New-Object System.Windows.Controls.StackPanel
+    $btns = [System.Windows.Controls.StackPanel]::new()
     $btns.Orientation = 'Horizontal'
     $btns.HorizontalAlignment = 'Right'
     $btns.Margin = New-OzThickness '0,20,0,0'
@@ -10345,7 +10842,8 @@ function Set-OzLanguage {
     if ($Oz.BloatShown -and $null -ne $Oz.LastBloat) { Show-OzBloat $Oz.LastBloat }
     if ($Oz.DriversShown) { Show-OzDriverRecs; if ($Oz.LastDriverScan) { Show-OzDriverScan $Oz.LastDriverScan -Quiet } }
     if ($Oz.ToolsShown) { Initialize-OzTools }
-    if ($Oz.GamesShown) { Show-OzGames (Get-OzGameScan) } else { $ui.GamesHint.Text = T 'The game check starts after the hardware scan.' }
+    # the games found last time are shown again in the new language, without scanning again
+    if ($Oz.GamesShown -and $null -ne $Oz.LastGames) { Show-OzGames $Oz.LastGames -Quiet } elseif (-not $Oz.GamesShown) { $ui.GamesHint.Text = T 'The game check starts after the hardware scan.' }
     if ($Oz.ThemesShown) { try { Show-OzThemes } catch { Write-OzLog ((T '{0} failed: {1}') -f (T 'Themes'), $_.Exception.Message) 'ERR' } }
     Update-OzCleanText
     Update-OzJournalView
@@ -10371,10 +10869,10 @@ function Set-OzRing {
 function New-OzSpecCard {
     param([string]$Title, [string]$Main, [string[]]$Lines, [int]$Score = -1, [string]$Accent = '#00E5FF')
     $card = New-OzCard
-    $sp = New-Object System.Windows.Controls.StackPanel
-    $head = New-Object System.Windows.Controls.StackPanel
+    $sp = [System.Windows.Controls.StackPanel]::new()
+    $head = [System.Windows.Controls.StackPanel]::new()
     $head.Orientation = 'Horizontal'
-    $bar = New-Object System.Windows.Controls.Border
+    $bar = [System.Windows.Controls.Border]::new()
     $bar.Width = 3; $bar.Height = 12; $bar.CornerRadius = New-Object System.Windows.CornerRadius(2)
     $bar.Background = Get-OzBrush $Accent
     [void]$head.Children.Add($bar)
@@ -10384,8 +10882,8 @@ function New-OzSpecCard {
     [void]$sp.Children.Add((New-OzText -Text $Main -Size 15 -Color '#E6F1FF' -Display -Semi -Wrap -Margin '0,8,0,6'))
     foreach ($l in $Lines) { if ($l) { [void]$sp.Children.Add((New-OzText -Text $l -Size 12 -Color '#8A9BBF' -Wrap -Margin '0,1,0,0')) } }
     if ($Score -ge 0) {
-        $pb = New-Object System.Windows.Controls.ProgressBar
-        $pb.Style = $Oz.Window.FindResource('Meter')
+        $pb = [System.Windows.Controls.ProgressBar]::new()
+        $pb.Style = (Get-OzRes 'Meter')
         $pb.Value = $Score
         $pb.Margin = New-OzThickness '0,10,0,0'
         [void]$sp.Children.Add($pb)
@@ -10460,11 +10958,11 @@ function Update-OzDashboard {
         $row = New-OzRowBorder
         $row.BorderBrush = Get-OzBrush ('#44' + $colors[$i.Level].TrimStart('#'))
         $grid = New-OzColumns @('Auto', '*', 'Auto')
-        $dot = New-Object System.Windows.Shapes.Ellipse
+        $dot = [System.Windows.Shapes.Ellipse]::new()
         $dot.Width = 9; $dot.Height = 9; $dot.Fill = Get-OzBrush $colors[$i.Level]
         $dot.VerticalAlignment = 'Top'; $dot.Margin = New-OzThickness '0,5,14,0'
         Add-OzGridChild $grid $dot 0
-        $tx = New-Object System.Windows.Controls.StackPanel
+        $tx = [System.Windows.Controls.StackPanel]::new()
         [void]$tx.Children.Add((New-OzText -Text $i.Title -Size 13.5 -Color '#E6F1FF' -Semi))
         [void]$tx.Children.Add((New-OzText -Text $i.Text -Size 12 -Wrap -Margin '0,3,0,0'))
         Add-OzGridChild $grid $tx 1
@@ -10533,8 +11031,8 @@ function New-OzTweakRow {
     $border = New-OzRowBorder
     $grid = New-OzColumns @('Auto', '*', 'Auto')
 
-    $cb = New-Object System.Windows.Controls.CheckBox
-    $cb.Style = $Oz.Window.FindResource('Switch')
+    $cb = [System.Windows.Controls.CheckBox]::new()
+    $cb.Style = (Get-OzRes 'Switch')
     $cb.Tag = $T.Id
     $cb.IsChecked = $false
     $cb.IsEnabled = $false
@@ -10543,7 +11041,7 @@ function New-OzTweakRow {
     $cb.Add_Click({ Update-OzRowState $this.Tag; Update-OzPendingBar })
     Add-OzGridChild $grid $cb 0
 
-    $txt = New-Object System.Windows.Controls.StackPanel
+    $txt = [System.Windows.Controls.StackPanel]::new()
     $nameColor = if ($T.Risk -eq 'Danger') { '#FF8FA3' } else { '#E6F1FF' }
     $nameT = New-OzText -Text '' -Size 13.5 -Color $nameColor -Semi
     $descT = New-OzText -Text '' -Size 12 -Wrap -Margin '0,2,0,0'
@@ -10553,11 +11051,11 @@ function New-OzTweakRow {
     foreach ($x in $nameT, $descT, $noteT, $infoT) { [void]$txt.Children.Add($x) }
     Add-OzGridChild $grid $txt 1
 
-    $side = New-Object System.Windows.Controls.StackPanel
+    $side = [System.Windows.Controls.StackPanel]::new()
     $side.HorizontalAlignment = 'Right'
     $side.VerticalAlignment = 'Center'
     $side.Margin = New-OzThickness '12,0,0,0'
-    $badges = New-Object System.Windows.Controls.StackPanel
+    $badges = [System.Windows.Controls.StackPanel]::new()
     $badges.Orientation = 'Horizontal'
     $badges.HorizontalAlignment = 'Right'
     [void]$side.Children.Add($badges)
@@ -10591,12 +11089,22 @@ function Set-OzRowText {
 }
 
 function Set-OzRowBadges {
+    # Badges are only rebuilt when the set changes; a language switch just changes their text
     param($Row)
     $t = $Row.Tweak
-    $Row.Badges.Children.Clear()
-    if ($Row.Rec) { [void]$Row.Badges.Children.Add((New-OzBadge (T 'RECOMMENDED') '#B79BFF')) }
-    if ($t.Reboot) { [void]$Row.Badges.Children.Add((New-OzBadge (T 'REBOOT') '#4FD8FF')) }
-    [void]$Row.Badges.Children.Add((New-OzBadge (T $t.Risk.ToUpper()) $Oz.RiskColors[$t.Risk]))
+    $want = New-Object System.Collections.Generic.List[object]
+    if ($Row.Rec) { $want.Add(@('RECOMMENDED', '#B79BFF')) }
+    if ($t.Reboot) { $want.Add(@('REBOOT', '#4FD8FF')) }
+    $want.Add(@($t.Risk.ToUpper(), $Oz.RiskColors[$t.Risk]))
+    $sig = ($want | ForEach-Object { $_[0] }) -join '|'
+    $kids = $Row.Badges.Children
+    if ($Row.BadgeSig -eq $sig -and $kids.Count -eq $want.Count) {
+        for ($i = 0; $i -lt $want.Count; $i++) { $kids[$i].Child.Text = T $want[$i][0] }
+        return
+    }
+    $Row.BadgeSig = $sig
+    $kids.Clear()
+    foreach ($w in $want) { [void]$kids.Add((New-OzBadge (T $w[0]) $w[1])) }
 }
 
 function Set-OzRowFromState {
@@ -10782,8 +11290,8 @@ function Initialize-OzTweakList {
     $chipDefs = @(@('ALL', 'ALL'), @('RECOMMENDED', 'RECOMMENDED'), @('PENDING', 'PENDING'), @('ACTIVE', 'ACTIVE'), @('ATTENTION', 'NEEDS ATTENTION')) +
     @($Oz.Categories | ForEach-Object { , @($_.Key, $_.Name) })
     foreach ($c in $chipDefs) {
-        $rb = New-Object System.Windows.Controls.RadioButton
-        $rb.Style = $Oz.Window.FindResource('Chip')
+        $rb = [System.Windows.Controls.RadioButton]::new()
+        $rb.Style = (Get-OzRes 'Chip')
         $rb.GroupName = 'chips'
         $rb.Content = T $c[1]
         $rb.Tag = $c[0]
@@ -10799,9 +11307,9 @@ function Initialize-OzTweakList {
     foreach ($c in $Oz.Categories) {
         $tw = @($Oz.Tweaks | Where-Object { $_.Cat -eq $c.Key })
         if (-not $tw) { continue }
-        $hdr = New-Object System.Windows.Controls.StackPanel
+        $hdr = [System.Windows.Controls.StackPanel]::new()
         $hdr.Margin = New-OzThickness '0,14,0,8'
-        $line = New-Object System.Windows.Controls.StackPanel
+        $line = [System.Windows.Controls.StackPanel]::new()
         $line.Orientation = 'Horizontal'
         $col = if ($c.Key -eq 'Danger') { '#FF3B5C' } else { '#00E5FF' }
         $title = New-OzText -Text '' -Size 13 -Color $col -Display -Bold
@@ -10955,11 +11463,11 @@ function Initialize-OzProfileCards {
             $card.BorderThickness = New-OzThickness '2'
             $card.Background = Get-OzBrush '#E60A1428'
         }
-        $sp = New-Object System.Windows.Controls.StackPanel
+        $sp = [System.Windows.Controls.StackPanel]::new()
         $head = New-OzColumns @('Auto', '*')
         $ic = New-OzText -Text ([string]$p.Icon) -Size 26 -Color $p.Color -Icon -Margin '0,2,14,0'
         Add-OzGridChild $head $ic 0
-        $ttl = New-Object System.Windows.Controls.StackPanel
+        $ttl = [System.Windows.Controls.StackPanel]::new()
         [void]$ttl.Children.Add((New-OzText -Text (T $p.Name) -Size 17 -Color '#E6F1FF' -Display -Bold))
         $subText = if ($p.Featured) { (T 'RECOMMENDED FOR YOUR PC') + '  /  ' + (T $p.Sub).ToUpper() } else { (T $p.Sub).ToUpper() }
         [void]$ttl.Children.Add((New-OzText -Text $subText -Size 10.5 -Color $p.Color -Display -Semi -Margin '0,2,0,0'))
@@ -10969,7 +11477,7 @@ function Initialize-OzProfileCards {
         $stats = New-OzText -Text '' -Size 11.5 -Color '#5D6E92' -Mono -Margin '0,0,0,12'
         [void]$sp.Children.Add($stats)
         $Oz.ProfileStats[$p.Key] = $stats
-        $btns = New-Object System.Windows.Controls.WrapPanel
+        $btns = [System.Windows.Controls.WrapPanel]::new()
         $pv = New-OzButton -Text (T 'PREVIEW') -Style 'Neon' -Tag $p.Key -Margin '0,0,8,6'
         $pv.Add_Click({ $k = $this.Tag; Invoke-OzSafe 'Profile preview' { Invoke-OzProfile $k } })
         [void]$btns.Children.Add($pv)
@@ -11455,10 +11963,19 @@ function Find-OzGame {
 }
 
 function Get-OzGameScan {
-    # Every supported game: installed or not, where, its settings file and how it compares
-    $un = @(Get-OzUninstallEntries)
-    $steam = Get-OzSteamInfo
-    $epic = @(Get-OzEpicGames)
+    # Every supported game: installed or not, where, its settings file and how it compares.
+    # -Background reads the installed programs, Steam and Epic (the slow part: hundreds of registry
+    # keys) on a background runspace, so the window keeps answering. It returns plain data only;
+    # the catalog, with its script blocks, is always used here on the window's thread.
+    param([switch]$Background)
+    $r = $null
+    if ($Background -and $Oz.Window) {
+        $r = @(Invoke-OzJob -Activity (T 'Looking for games...') -ScriptBlock {
+                [pscustomobject]@{ Kind = 'GameData'; Un = @(Get-OzUninstallEntries); Steam = (Get-OzSteamInfo); Epic = @(Get-OzEpicGames) }
+            }) | Where-Object { $_ -and $_.PSObject.Properties['Kind'] -and $_.Kind -eq 'GameData' } | Select-Object -First 1
+    }
+    if ($r) { $un = @($r.Un); $steam = $r.Steam; $epic = @($r.Epic) }
+    else { $un = @(Get-OzUninstallEntries); $steam = Get-OzSteamInfo; $epic = @(Get-OzEpicGames) }
     foreach ($g in (Get-OzGameCatalog)) {
         $found = $null
         try { $found = Find-OzGame $g $un $steam $epic } catch { }
@@ -11481,7 +11998,7 @@ function Get-OzGameScan {
 }
 
 function Show-OzGames {
-    param($Games)
+    param($Games, [switch]$Quiet)
     $Games = @($Games | Where-Object { $_ })
     $Oz.LastGames = $Games
     $panel = $Oz.UI.GamesPanel
@@ -11496,18 +12013,18 @@ function Show-OzGames {
     foreach ($r in @($Games | Where-Object { $_.Installed }) + @($Games | Where-Object { -not $_.Installed })) {
         [void]$panel.Children.Add((New-OzGameCard $r))
     }
-    Write-OzLog (T 'Games checked: {0} found on this PC.' $inst) 'OK'
+    if (-not $Quiet) { Write-OzLog (T 'Games checked: {0} found on this PC.' $inst) 'OK' }
 }
 
 function New-OzGameCard {
     param($R)
     $g = $R.Game
     $card = New-OzCard
-    $sp = New-Object System.Windows.Controls.StackPanel
+    $sp = [System.Windows.Controls.StackPanel]::new()
 
     # ---- header: icon, name, where it is installed, settings summary, details toggle ----
     $head = New-OzColumns @('Auto', '*', 'Auto')
-    $tile = New-Object System.Windows.Controls.Border
+    $tile = [System.Windows.Controls.Border]::new()
     $tile.Width = 48; $tile.Height = 48
     $tile.CornerRadius = New-Object System.Windows.CornerRadius(12)
     $tile.Background = Get-OzBrush '#0C1222'
@@ -11516,7 +12033,7 @@ function New-OzGameCard {
     $tile.Margin = New-OzThickness '0,0,14,0'
     $img = if ($R.IconPath) { Get-OzFileIcon $R.IconPath } else { $null }
     if ($img) {
-        $im = New-Object System.Windows.Controls.Image
+        $im = [System.Windows.Controls.Image]::new()
         $im.Source = $img
         $im.Width = 32; $im.Height = 32
         [System.Windows.Media.RenderOptions]::SetBitmapScalingMode($im, [System.Windows.Media.BitmapScalingMode]::HighQuality)
@@ -11527,14 +12044,14 @@ function New-OzGameCard {
         $tile.Child = $mono
     }
     Add-OzGridChild $head $tile 0
-    $ttl = New-Object System.Windows.Controls.StackPanel
+    $ttl = [System.Windows.Controls.StackPanel]::new()
     $ttl.VerticalAlignment = 'Center'
     [void]$ttl.Children.Add((New-OzText -Text $g.Name -Size 17 -Color '#E6F1FF' -Display -Bold))
     $status = if ($R.Installed) { New-OzText -Text (T 'Installed with {0}' $R.Launcher) -Size 11.5 -Color '#2BFF9A' -Display -Semi -Margin '0,2,0,0' }
     else { New-OzText -Text (T 'Not found on this PC') -Size 11.5 -Color '#5D6E92' -Display -Semi -Margin '0,2,0,0' }
     [void]$ttl.Children.Add($status)
     Add-OzGridChild $head $ttl 1
-    $right = New-Object System.Windows.Controls.StackPanel
+    $right = [System.Windows.Controls.StackPanel]::new()
     $right.Orientation = 'Horizontal'
     $right.VerticalAlignment = 'Center'
     $checked = @($R.Review | Where-Object { $null -ne $_.Ok })
@@ -11545,7 +12062,7 @@ function New-OzGameCard {
         $badge.Margin = New-OzThickness '0,0,10,0'
         [void]$right.Children.Add($badge)
     }
-    $details = New-Object System.Windows.Controls.StackPanel
+    $details = [System.Windows.Controls.StackPanel]::new()
     $details.Margin = New-OzThickness '0,14,0,0'
     $details.Visibility = if ($R.Installed) { 'Visible' } else { 'Collapsed' }
     $toggle = New-OzButton -Text $(if ($R.Installed) { T 'HIDE' } else { T 'DETAILS' }) -Style 'Neon' -Margin '0'
@@ -11589,7 +12106,7 @@ function New-OzGameCard {
 
     # ---- what to set in the game menu ----
     [void]$details.Children.Add((New-OzText -Text ((T 'SET IN THE GAME MENU') + '   //   ' + $g.MenuPath) -Size 10.5 -Color '#5D6E92' -Display -Bold -Margin '0,0,0,6'))
-    $menu = New-Object System.Windows.Controls.Primitives.UniformGrid
+    $menu = [System.Windows.Controls.Primitives.UniformGrid]::new()
     $menu.Columns = 2
     $menu.Margin = New-OzThickness '0,0,0,12'
     foreach ($m in $g.Menu) {
@@ -11606,19 +12123,19 @@ function New-OzGameCard {
     foreach ($a in $g.LaunchArgs) {
         $row = New-OzRowBorder -Margin '0,0,0,6' -Padding '12,8,12,8'
         $cols = New-OzColumns @('*', 'Auto')
-        $left = New-Object System.Windows.Controls.StackPanel
-        $lh = New-Object System.Windows.Controls.StackPanel
+        $left = [System.Windows.Controls.StackPanel]::new()
+        $lh = [System.Windows.Controls.StackPanel]::new()
         $lh.Orientation = 'Horizontal'
         [void]$lh.Children.Add((New-OzText -Text $a.Label -Size 12 -Color '#8A9BBF'))
         if ($a.Rec) { [void]$lh.Children.Add((New-OzBadge -Text (T 'RECOMMENDED') -Color '#00E5FF')) }
         [void]$left.Children.Add($lh)
-        $box = New-Object System.Windows.Controls.TextBox
+        $box = [System.Windows.Controls.TextBox]::new()
         $box.Text = $a.Args
         $box.IsReadOnly = $true
         $box.Background = Get-OzBrush '#00000000'
         $box.BorderThickness = New-OzThickness '0'
         $box.Foreground = Get-OzBrush '#9FE9FF'
-        $box.FontFamily = $Oz.Window.FindResource('Mono')
+        $box.FontFamily = (Get-OzRes 'Mono')
         $box.FontSize = 13.5
         $box.Margin = New-OzThickness '0,3,0,0'
         [void]$left.Children.Add($box)
@@ -11662,11 +12179,11 @@ function Show-OzBloat {
     foreach ($b in $Found) {
         $row = New-OzRowBorder -Margin '0,0,10,8'
         $grid = New-OzColumns @('*', 'Auto')
-        $cb = New-Object System.Windows.Controls.CheckBox
-        $cb.Style = $Oz.Window.FindResource('Tick')
+        $cb = [System.Windows.Controls.CheckBox]::new()
+        $cb.Style = (Get-OzRes 'Tick')
         $cb.Tag = $b
         $cb.IsChecked = if ($keep.ContainsKey($b.Pattern)) { $keep[$b.Pattern] } else { [bool]$b.Rec }
-        $content = New-Object System.Windows.Controls.StackPanel
+        $content = [System.Windows.Controls.StackPanel]::new()
         [void]$content.Children.Add((New-OzText -Text (T $b.Name) -Size 13 -Color '#E6F1FF' -Semi))
         [void]$content.Children.Add((New-OzText -Text (($b.Packages | Select-Object -First 2) -join ', ') -Size 10.5 -Color '#5D6E92' -Mono))
         $cb.Content = $content
@@ -11686,7 +12203,7 @@ function Show-OzDriverRecs {
     $catColor = @{ GPU = '#FF2BD6'; Chipset = '#00E5FF'; OEM = '#FFB020'; Board = '#FFB020'; Network = '#2BFF9A'; Windows = '#B79BFF' }
     foreach ($r in @(Get-OzDriverRecommendations $Oz.Sys)) {
         $card = New-OzCard
-        $sp = New-Object System.Windows.Controls.StackPanel
+        $sp = [System.Windows.Controls.StackPanel]::new()
         $col = if ($catColor.ContainsKey($r.Cat)) { $catColor[$r.Cat] } else { '#00E5FF' }
         [void]$sp.Children.Add((New-OzText -Text (T $r.Cat).ToUpper() -Size 10.5 -Color $col -Display -Semi))
         [void]$sp.Children.Add((New-OzText -Text $r.Title -Size 14 -Color '#E6F1FF' -Display -Semi -Wrap -Margin '0,4,0,4'))
@@ -11713,7 +12230,7 @@ function Show-OzDriverScan {
         foreach ($p in $Scan.Problems) {
             $row = New-OzRowBorder
             $row.BorderBrush = Get-OzBrush '#55FF3B5C'
-            $sp = New-Object System.Windows.Controls.StackPanel
+            $sp = [System.Windows.Controls.StackPanel]::new()
             [void]$sp.Children.Add((New-OzText -Text $p.Name -Size 13 -Color '#E6F1FF' -Semi))
             $code = [int]$p.Code
             $meaning = if ($Oz.DeviceCodes -and $Oz.DeviceCodes.ContainsKey($code)) { T $Oz.DeviceCodes[$code] } else { T 'error code {0}' $code }
@@ -11761,12 +12278,12 @@ function Show-OzCleanDrives {
     $panel.Children.Clear()
     if (-not $Oz.CleanDrives.Count) { [void]$panel.Children.Add((New-OzText -Text (T 'No local drives found.') -Size 12.5)); return }
     foreach ($d in $Oz.CleanDrives) {
-        $cb = New-Object System.Windows.Controls.CheckBox
-        $cb.Style = $Oz.Window.FindResource('Tick')
+        $cb = [System.Windows.Controls.CheckBox]::new()
+        $cb.Style = (Get-OzRes 'Tick')
         $cb.Tag = $d.Drive
         $cb.IsChecked = [bool]$Oz.CleanDriveSel[$d.Drive]
         $cb.Margin = New-OzThickness '0,0,22,8'
-        $sp = New-Object System.Windows.Controls.StackPanel
+        $sp = [System.Windows.Controls.StackPanel]::new()
         $title = if ($d.IsWindows) { T '{0}  Windows drive' $d.Drive } elseif ($d.Label) { '{0}  {1}' -f $d.Drive, $d.Label } else { T '{0}  Local drive' $d.Drive }
         [void]$sp.Children.Add((New-OzText -Text $title -Size 13 -Color '#E6F1FF' -Semi))
         [void]$sp.Children.Add((New-OzText -Text (T '{0:N1} GB free of {1:N1} GB' $d.FreeGB $d.SizeGB) -Size 10.5 -Color '#5D6E92' -Mono))
@@ -11801,13 +12318,13 @@ function Show-OzCleanList {
             $empty = ($it.Bytes -eq 0)
             $row = New-OzRowBorder -Margin '0,0,0,8'
             $grid = New-OzColumns @('*', 'Auto', 'Auto')
-            $cb = New-Object System.Windows.Controls.CheckBox
-            $cb.Style = $Oz.Window.FindResource('Tick')
+            $cb = [System.Windows.Controls.CheckBox]::new()
+            $cb.Style = (Get-OzRes 'Tick')
             $cb.Tag = $it
             $cb.IsChecked = if ($keep.ContainsKey($it.Key)) { $keep[$it.Key] } else { [bool]$it.Rec -and -not $empty }
             if ($empty) { $cb.IsChecked = $false; $cb.IsEnabled = $false; $row.Opacity = 0.55 }
             $cb.Add_Click({ Update-OzCleanTotal })
-            $content = New-Object System.Windows.Controls.StackPanel
+            $content = [System.Windows.Controls.StackPanel]::new()
             [void]$content.Children.Add((New-OzText -Text (T $it.Name) -Size 13 -Color '#E6F1FF' -Semi -Wrap))
             [void]$content.Children.Add((New-OzText -Text (T $it.Desc) -Size 11.5 -Wrap -Margin '0,2,0,0'))
             $paths = @($it.Paths)
@@ -11874,8 +12391,8 @@ function Initialize-OzTools {
     if ($null -eq $cur) { $cur = Get-OzCurrentDns; $Oz.DnsNow = $cur }
     $Oz.DnsChoice = $null
     foreach ($k in $Oz.DnsChoices.Keys) {
-        $rb = New-Object System.Windows.Controls.RadioButton
-        $rb.Style = $Oz.Window.FindResource('Chip')
+        $rb = [System.Windows.Controls.RadioButton]::new()
+        $rb.Style = (Get-OzRes 'Chip')
         $rb.GroupName = 'dns'
         $rb.Content = T $k
         $rb.Tag = $k
@@ -11917,15 +12434,15 @@ function Update-OzStartupList {
     foreach ($a in $apps) {
         $row = New-OzRowBorder -Margin '0,0,0,6' -Padding '12,8,12,8'
         $grid = New-OzColumns @('Auto', '*', 'Auto')
-        $cb = New-Object System.Windows.Controls.CheckBox
-        $cb.Style = $Oz.Window.FindResource('Switch')
+        $cb = [System.Windows.Controls.CheckBox]::new()
+        $cb.Style = (Get-OzRes 'Switch')
         $cb.IsChecked = $a.Enabled
         $cb.Tag = $a
         $cb.Margin = New-OzThickness '0,0,14,0'
         $cb.VerticalAlignment = 'Center'
         $cb.Add_Click({ $item = $this.Tag; $on = [bool]$this.IsChecked; Invoke-OzSafe 'Startup app' { Set-OzStartupApp $item $on } })
         Add-OzGridChild $grid $cb 0
-        $sp = New-Object System.Windows.Controls.StackPanel
+        $sp = [System.Windows.Controls.StackPanel]::new()
         [void]$sp.Children.Add((New-OzText -Text $a.Name -Size 13 -Color '#E6F1FF' -Semi))
         $cmd = New-OzText -Text $a.Command -Size 10.5 -Color '#5D6E92' -Mono
         $cmd.TextTrimming = 'CharacterEllipsis'
@@ -11940,10 +12457,15 @@ function Update-OzStartupList {
 
 #region ============================ BACKUP VIEW ============================
 function Update-OzJournalView {
+    # Rebuilt only when the journal or the language changed since it was last drawn: with many
+    # tweaks applied this list has a row each, and opening BACKUP & UNDO must not rebuild it every time
     $panel = $Oz.UI.JournalPanel
     if (-not $panel) { return }
-    $panel.Children.Clear()
     $j = Read-OzJournal
+    $sig = '{0}|{1}|{2}|{3}|{4}' -f [int]$Oz.JournalRev, $Oz.Lang, $j.Count, $Oz.Journal, $Oz.TweakIndex.Count
+    if ($Oz.JournalViewSig -eq $sig -and $panel.Children.Count) { return }
+    $Oz.JournalViewSig = $sig
+    $panel.Children.Clear()
     $keys = @($j.Keys | Sort-Object { [string]$j[$_].Applied } -Descending)
     $Oz.UI.JournalSummary.Text = T '{0} change(s) tracked. Journal file: {1}' $keys.Count $Oz.Journal
     if (-not $keys.Count) { [void]$panel.Children.Add((New-OzText -Text (T 'Nothing applied yet. Changes you make will appear here with a one-click revert.') -Size 12.5)); return }
@@ -11971,14 +12493,50 @@ function Update-OzJournalView {
 
 #region ============================ THEMES VIEW ============================
 function Set-OzThemeValue {
-    # Every control on the THEMES page writes through here, then the preview follows
+    # Every control on the THEMES page writes through here, then the preview follows.
+    # Setting a value it already has does nothing (a chip that is checked again, a sync below).
     param([string]$Key, $Value)
+    $old = $Oz.ThemeCfg[$Key]
+    if (($Value -is [string] -or $Value -is [ValueType]) -and $null -ne $old -and ($old -is [string] -or $old -is [ValueType]) -and [string]$old -ceq [string]$Value) { return }
     $Oz.ThemeCfg[$Key] = $Value
     $Oz.ThemeDirty = $true
     if ($Key -in 'AutoInk', 'InkMode') { Show-OzThemeClockPanel }
-    if ($Key -eq 'Look') { Show-OzThemeLooks }
-    Update-OzThemePreview
+    if ($Key -eq 'Look') { Sync-OzThemeChips $Oz.UI.ThemeLookPanel 'Look' }
+    if ($Key -in 'ScreenClock', 'ScreenBar', 'ScreenDock', 'Clock', 'Bar', 'Dock') { Show-OzThemeScreenMap }
+    Request-OzThemePreview
     Update-OzThemeButtons
+}
+
+function Sync-OzThemeChips {
+    # Checks the chip of the current value inside $Panel (used when a value is set from code)
+    param($Panel, [string]$Key)
+    if (-not $Panel) { return }
+    $want = [string]$Oz.ThemeCfg[$Key]
+    $stack = New-Object System.Collections.Stack
+    $stack.Push($Panel)
+    while ($stack.Count) {
+        $el = $stack.Pop()
+        if ($el -is [System.Windows.Controls.RadioButton] -and $el.Tag -is [hashtable] -and $el.Tag.Key -eq $Key) {
+            $on = ([string]$el.Tag.Value -eq $want)
+            if ([bool]$el.IsChecked -ne $on) { $el.IsChecked = $on }
+            continue
+        }
+        if ($el -is [System.Windows.Controls.Panel]) { foreach ($c in $el.Children) { $stack.Push($c) } }
+        elseif ($el -is [System.Windows.Controls.Decorator] -and $el.Child) { $stack.Push($el.Child) }
+        elseif ($el -is [System.Windows.Controls.ContentControl] -and $el.Content -is [System.Windows.UIElement]) { $stack.Push($el.Content) }
+    }
+}
+
+function Request-OzThemePreview {
+    # The preview is redrawn once the click has been handled and drawn; several changes in a row
+    # (a fast series of + clicks) are drawn once
+    if (-not $Oz.Window) { Update-OzThemePreview; return }
+    if ($Oz.ThemePreviewQueued) { return }
+    $Oz.ThemePreviewQueued = $true
+    [void]$Oz.Window.Dispatcher.BeginInvoke([Action] {
+            $Oz.ThemePreviewQueued = $false
+            try { Update-OzThemePreview } catch { Write-OzLog ((T '{0} failed: {1}') -f (T 'Themes'), $_.Exception.Message) 'WARN' }
+        }, [System.Windows.Threading.DispatcherPriority]::Background)
 }
 
 function New-OzThemeRow {
@@ -11986,7 +12544,7 @@ function New-OzThemeRow {
     param([string]$Title, [string]$Sub, $Control)
     $row = New-OzRowBorder -Margin '0,0,0,6' -Padding '14,9,14,9'
     $cols = New-OzColumns @('*', 'Auto')
-    $left = New-Object System.Windows.Controls.StackPanel
+    $left = [System.Windows.Controls.StackPanel]::new()
     $left.VerticalAlignment = 'Center'
     [void]$left.Children.Add((New-OzText -Text $Title -Size 13 -Color '#E6F1FF' -Semi))
     if ($Sub) { [void]$left.Children.Add((New-OzText -Text $Sub -Size 11.5 -Color '#5D6E92' -Wrap -Margin '0,2,12,0')) }
@@ -12003,17 +12561,17 @@ function New-OzThemeRow {
 function New-OzThemeChips {
     # One choice out of a few. Items: @{ Value = ...; Label = '...'; Tip = '...'; Swatch = '#hex' }
     param([string]$Key, [object[]]$Items, [double]$MaxWidth = 0)
-    $p = New-Object System.Windows.Controls.WrapPanel
+    $p = [System.Windows.Controls.WrapPanel]::new()
     if ($MaxWidth) { $p.MaxWidth = $MaxWidth }
     $group = 'theme-{0}-{1}' -f $Key, [guid]::NewGuid().ToString('N').Substring(0, 6)
     foreach ($it in $Items) {
-        $rb = New-Object System.Windows.Controls.RadioButton
-        $rb.Style = $Oz.Window.FindResource('Chip')
+        $rb = [System.Windows.Controls.RadioButton]::new()
+        $rb.Style = (Get-OzRes 'Chip')
         $rb.GroupName = $group
         if ($it.Swatch) {
-            $sp = New-Object System.Windows.Controls.StackPanel
+            $sp = [System.Windows.Controls.StackPanel]::new()
             $sp.Orientation = 'Horizontal'
-            $dot = New-Object System.Windows.Shapes.Ellipse
+            $dot = [System.Windows.Shapes.Ellipse]::new()
             $dot.Width = 12; $dot.Height = 12
             $dot.Fill = Get-OzBrush $it.Swatch
             $dot.Stroke = Get-OzBrush $(if ($it.Edge) { $it.Edge } else { '#5D6E92' })
@@ -12035,8 +12593,8 @@ function New-OzThemeChips {
 
 function New-OzThemeSwitch {
     param([string]$Key, [switch]$Disabled)
-    $c = New-Object System.Windows.Controls.CheckBox
-    $c.Style = $Oz.Window.FindResource('Switch')
+    $c = [System.Windows.Controls.CheckBox]::new()
+    $c.Style = (Get-OzRes 'Switch')
     $c.IsChecked = [bool]$Oz.ThemeCfg[$Key]
     $c.Tag = $Key
     if ($Disabled) { $c.IsEnabled = $false }
@@ -12048,7 +12606,7 @@ function New-OzThemeSwitch {
 function New-OzThemeStepper {
     # A number with - and + buttons, like the settings panels this page is modeled on
     param([string]$Key, [double]$Step, [double]$Min, [double]$Max, [string]$Format = '0', [string]$Unit = '', [switch]$Disabled)
-    $sp = New-Object System.Windows.Controls.StackPanel
+    $sp = [System.Windows.Controls.StackPanel]::new()
     $sp.Orientation = 'Horizontal'
     $val = New-OzText -Text ((([double]$Oz.ThemeCfg[$Key]).ToString($Format, $Oz.Inv)) + $Unit) -Size 13 -Color '#E6F1FF' -Display -Semi -Margin '0,0,10,0'
     $val.MinWidth = 48
@@ -12076,9 +12634,9 @@ function New-OzThemeStepper {
 function New-OzThemeColor {
     # A #RRGGBB box with a live swatch
     param([string]$Key)
-    $sp = New-Object System.Windows.Controls.StackPanel
+    $sp = [System.Windows.Controls.StackPanel]::new()
     $sp.Orientation = 'Horizontal'
-    $sw = New-Object System.Windows.Controls.Border
+    $sw = [System.Windows.Controls.Border]::new()
     $sw.Width = 26; $sw.Height = 26
     $sw.CornerRadius = New-Object System.Windows.CornerRadius(6)
     $sw.BorderBrush = Get-OzBrush '#3A4C70'
@@ -12086,12 +12644,12 @@ function New-OzThemeColor {
     $sw.Background = Get-OzBrush ([string]$Oz.ThemeCfg[$Key])
     $sw.Margin = New-OzThickness '0,0,8,0'
     [void]$sp.Children.Add($sw)
-    $tb = New-Object System.Windows.Controls.TextBox
-    $tb.Style = $Oz.Window.FindResource('Input')
+    $tb = [System.Windows.Controls.TextBox]::new()
+    $tb.Style = (Get-OzRes 'Input')
     $tb.Padding = New-OzThickness '8,5,8,5'
     $tb.Width = 116
     $tb.MaxLength = 7
-    $tb.FontFamily = $Oz.Window.FindResource('Mono')
+    $tb.FontFamily = (Get-OzRes 'Mono')
     $tb.Text = [string]$Oz.ThemeCfg[$Key]
     $tb.Tag = @{ Key = $Key; Swatch = $sw }
     $tb.Add_TextChanged({
@@ -12166,13 +12724,13 @@ function Show-OzThemeClockPanel {
     $cfg = $Oz.ThemeCfg
     if (-not $Oz.UI.ThemeTabLook.IsChecked) {
         # ---- GENERAL ----
-        $grid = New-Object System.Windows.Controls.Primitives.UniformGrid
+        $grid = [System.Windows.Controls.Primitives.UniformGrid]::new()
         $grid.Columns = 3; $grid.Rows = 3
         $names = 'Top left', 'Top', 'Top right', 'Left', 'Center', 'Right', 'Bottom left', 'Bottom', 'Bottom right'
         $group = 'theme-pos-' + [guid]::NewGuid().ToString('N').Substring(0, 6)
         for ($i = 0; $i -lt 9; $i++) {
-            $rb = New-Object System.Windows.Controls.RadioButton
-            $rb.Style = $Oz.Window.FindResource('Chip')
+            $rb = [System.Windows.Controls.RadioButton]::new()
+            $rb.Style = (Get-OzRes 'Chip')
             $rb.GroupName = $group
             $rb.Content = [string][char]0x25CF
             $rb.FontSize = 9
@@ -12255,8 +12813,8 @@ function Show-OzThemeDock {
     $Oz.ThemeDockCatalog = $cat
     $chosen = @($Oz.ThemeCfg.DockApps)
     foreach ($a in $cat) {
-        $c = New-Object System.Windows.Controls.CheckBox
-        $c.Style = $Oz.Window.FindResource('Tick')
+        $c = [System.Windows.Controls.CheckBox]::new()
+        $c.Style = (Get-OzRes 'Tick')
         $c.Content = $a.Name
         $c.Margin = New-OzThickness '0,0,18,8'
         $c.IsChecked = $(if ($chosen.Count) { $chosen -contains $a.Id } else { [bool]$a.Default })
@@ -12265,8 +12823,8 @@ function Show-OzThemeDock {
         [void]$p.Children.Add($c)
     }
     foreach ($d in @($Oz.ThemeCfg.DockCustom)) {
-        $c = New-Object System.Windows.Controls.CheckBox
-        $c.Style = $Oz.Window.FindResource('Tick')
+        $c = [System.Windows.Controls.CheckBox]::new()
+        $c.Style = (Get-OzRes 'Tick')
         $c.Content = [string]$d.Name
         $c.ToolTip = [string]$d.Target
         $c.Margin = New-OzThickness '0,0,18,8'
@@ -12292,33 +12850,217 @@ function Update-OzThemeDockChoice {
     if (-not $ids.Count -and -not $custom.Count) { $Oz.ThemeCfg.Dock = $false; Show-OzThemeWidgets }
 }
 
+function Get-OzThemeScreenLabel {
+    # 'MAIN SCREEN (1)', 'SCREEN 2'... for a screen from Get-OzScreens
+    param($Screen)
+    if (-not $Screen) { return '' }
+    if ($Screen.Primary) { T 'SCREEN {0} (MAIN)' $Screen.N } else { T 'SCREEN {0}' $Screen.N }
+}
+
+function Get-OzThemeScreenItems {
+    # The screen choices for one part of the theme: the main screen, each other screen, a screen
+    # picked before that is not connected now, and (bar and dock) every screen
+    param([string]$Key, [switch]$AllowAll)
+    $screens = @($Oz.ThemeScreens)
+    $main = @($screens | Where-Object Primary) | Select-Object -First 1
+    if ($main -and [string]$Oz.ThemeCfg[$Key] -eq [string]$main.N) { $Oz.ThemeCfg[$Key] = 'main' }
+    $items = @(@{ Value = 'main'; Label = (Get-OzThemeScreenLabel $main); Tip = $(if ($main) { '{0} x {1}' -f $main.W, $main.H }) })
+    foreach ($sc in $screens) {
+        if ($main -and $sc.N -eq $main.N) { continue }
+        $items += @{ Value = [string]$sc.N; Label = (Get-OzThemeScreenLabel $sc); Tip = ('{0} x {1}' -f $sc.W, $sc.H) }
+    }
+    $cur = [string]$Oz.ThemeCfg[$Key]
+    if ($cur -match '^\d+$' -and -not @($items | Where-Object { $_.Value -eq $cur }).Count) {
+        $items += @{ Value = $cur; Label = (T 'SCREEN {0} (NOT CONNECTED)' $cur); Tip = (T 'Until it is connected again, this part goes on the main screen.') }
+    }
+    if ($AllowAll -and $screens.Count -gt 1) { $items += @{ Value = 'all'; Label = (T 'ALL SCREENS'); Tip = (T 'One copy on every screen.') } }
+    if ($AllowAll -and $screens.Count -le 1 -and $cur -eq 'all') { $items += @{ Value = 'all'; Label = (T 'ALL SCREENS'); Tip = (T 'One copy on every screen.') } }
+    $items
+}
+
+function Show-OzThemeScreens {
+    # The SCREENS card: a map of the screens and, for the clock, the bar and the dock, where they go
+    if (-not $Oz.ThemeScreens) { $Oz.ThemeScreens = @(Get-OzScreens) }
+    $p = $Oz.UI.ThemeScreenPanel
+    if (-not $p) { return }
+    $p.Children.Clear()
+    $one = @($Oz.ThemeScreens).Count -le 1
+    [void]$p.Children.Add((New-OzThemeRow (T 'Clock') (T 'The screen the clock and its wallpaper colors are on.') (New-OzThemeChips -Key 'ScreenClock' -Items (Get-OzThemeScreenItems 'ScreenClock') -MaxWidth 330)))
+    [void]$p.Children.Add((New-OzThemeRow (T 'Status bar') (T 'The wallpaper picker opens under it.') (New-OzThemeChips -Key 'ScreenBar' -Items (Get-OzThemeScreenItems 'ScreenBar' -AllowAll) -MaxWidth 330)))
+    [void]$p.Children.Add((New-OzThemeRow (T 'Dock') (T 'Your apps, at the bottom of this screen.') (New-OzThemeChips -Key 'ScreenDock' -Items (Get-OzThemeScreenItems 'ScreenDock' -AllowAll) -MaxWidth 330)))
+    if ($one) { [void]$p.Children.Add((New-OzText -Text (T 'Only one screen is connected now. Connect another one and press CHECK AGAIN to pick it.') -Size 11.5 -Color '#5D6E92' -Wrap -Margin '2,2,0,0')) }
+    Show-OzThemeScreenMap
+}
+
+function Show-OzThemeScreenMap {
+    # The screens drawn to scale where they really are, with what each one shows
+    $box = $Oz.UI.ThemeScreenMap
+    if (-not $box) { return }
+    $screens = @($Oz.ThemeScreens)
+    $cv = [System.Windows.Controls.Canvas]::new()
+    $box.Child = $cv
+    if (-not $screens.Count) { return }
+    $minX = ($screens | Measure-Object X -Minimum).Minimum; $minY = ($screens | Measure-Object Y -Minimum).Minimum
+    $maxX = ($screens | ForEach-Object { $_.X + $_.W } | Measure-Object -Maximum).Maximum
+    $maxY = ($screens | ForEach-Object { $_.Y + $_.H } | Measure-Object -Maximum).Maximum
+    $bw = [math]::Max(1, $box.Width - 22); $bh = [math]::Max(1, $box.Height - 22)
+    $f = [math]::Min($bw / [math]::Max(1, $maxX - $minX), $bh / [math]::Max(1, $maxY - $minY))
+    $ox = 11 + ($bw - ($maxX - $minX) * $f) / 2; $oy = 11 + ($bh - ($maxY - $minY) * $f) / 2
+    $cfg = $Oz.ThemeCfg
+    $where = @{}
+    foreach ($c in @(Get-OzThemeCopies $cfg $screens)) {
+        if (-not $c.On) { continue }
+        $sc = Get-OzThemeScreenOf $c.At $screens
+        if (-not $sc) { continue }
+        $name = switch ($c.Part) { 'Clock' { T 'CLOCK' } 'Bar' { T 'BAR' } default { T 'DOCK' } }
+        if (-not $where.ContainsKey($sc.N)) { $where[$sc.N] = @() }
+        if ($where[$sc.N] -notcontains $name) { $where[$sc.N] += $name }
+    }
+    foreach ($sc in $screens) {
+        $r = [System.Windows.Controls.Border]::new()
+        $r.Width = [math]::Max(14, $sc.W * $f - 3); $r.Height = [math]::Max(10, $sc.H * $f - 3)
+        $used = $where.ContainsKey($sc.N)
+        $r.Background = Get-OzBrush $(if ($used) { '#2200E5FF' } else { '#0E1729' })
+        $r.BorderBrush = Get-OzBrush $(if ($sc.Primary) { '#00E5FF' } else { '#3A4C70' })
+        $r.BorderThickness = New-OzThickness '1.5'
+        $r.CornerRadius = [System.Windows.CornerRadius]::new(4)
+        $r.ToolTip = '{0}  -  {1} x {2}' -f (Get-OzThemeScreenLabel $sc), $sc.W, $sc.H
+        $sp = [System.Windows.Controls.StackPanel]::new()
+        $sp.VerticalAlignment = 'Center'; $sp.HorizontalAlignment = 'Center'
+        $num = New-OzText -Text ([string]$sc.N) -Size ([math]::Max(10, [math]::Min(26, $r.Height * 0.42))) -Color $(if ($used) { '#E6F1FF' } else { '#5D6E92' }) -Display -Bold
+        $num.HorizontalAlignment = 'Center'
+        [void]$sp.Children.Add($num)
+        if ($used -and $r.Height -ge 40) {
+            $t = New-OzText -Text ($where[$sc.N] -join ' ') -Size 8.5 -Color '#00E5FF' -Display -Semi
+            $t.HorizontalAlignment = 'Center'
+            [void]$sp.Children.Add($t)
+        }
+        $r.Child = $sp
+        [System.Windows.Controls.Canvas]::SetLeft($r, $ox + ($sc.X - $minX) * $f + 1.5)
+        [System.Windows.Controls.Canvas]::SetTop($r, $oy + ($sc.Y - $minY) * $f + 1.5)
+        [void]$cv.Children.Add($r)
+    }
+}
+
+function Show-OzScreenNumbers {
+    # IDENTIFY: a big number in the middle of every screen for a few seconds, like Windows does
+    foreach ($w in @($Oz.IdentifyWindows)) { try { $w.Close() } catch { } }
+    $Oz.IdentifyWindows = @()
+    $Oz.ThemeScreens = @(Get-OzScreens)
+    $dpi = [math]::Max(0.5, (Get-OzThemeScaleNow) / 100)
+    foreach ($sc in $Oz.ThemeScreens) {
+        $w = New-Object System.Windows.Window
+        $w.WindowStyle = 'None'; $w.ResizeMode = 'NoResize'; $w.ShowInTaskbar = $false; $w.Topmost = $true; $w.ShowActivated = $false
+        $w.Width = 300; $w.Height = 220
+        $w.WindowStartupLocation = 'Manual'
+        $w.Left = ($sc.X + $sc.W / 2) / $dpi - 150; $w.Top = ($sc.Y + $sc.H / 2) / $dpi - 110
+        $w.Background = Get-OzBrush '#05070D'
+        $w.BorderBrush = Get-OzBrush $(if ($sc.Primary) { '#00E5FF' } else { '#8A5CFF' })
+        $w.BorderThickness = New-OzThickness '2'
+        $sp = [System.Windows.Controls.StackPanel]::new()
+        $sp.VerticalAlignment = 'Center'
+        $n = New-OzText -Text ([string]$sc.N) -Size 110 -Color '#E6F1FF' -Display -Bold
+        $n.Foreground = Get-OzRes 'NeonGrad'
+        $n.HorizontalAlignment = 'Center'
+        [void]$sp.Children.Add($n)
+        $l = New-OzText -Text (Get-OzThemeScreenLabel $sc) -Size 15 -Color '#8A9BBF' -Display -Semi
+        $l.HorizontalAlignment = 'Center'
+        [void]$sp.Children.Add($l)
+        $w.Content = $sp
+        $w.Show()
+        $Oz.IdentifyWindows += $w
+    }
+    $t = New-Object System.Windows.Threading.DispatcherTimer
+    $t.Interval = [TimeSpan]::FromMilliseconds(2600)
+    $t.Add_Tick({
+            $this.Stop()
+            foreach ($w in @($Oz.IdentifyWindows)) { try { $w.Close() } catch { } }
+            $Oz.IdentifyWindows = @()
+        })
+    $t.Start()
+    Show-OzThemeScreens
+}
+
+function Show-OzThemeBarDock {
+    # STATUS BAR AND DOCK: what the bar shows, dock icon size, background strength
+    $p = $Oz.UI.ThemeBarDockPanel
+    if (-not $p) { return }
+    $p.Children.Clear()
+    $hasBat = [bool]($Oz.Sys -and $Oz.Sys.Battery -and $Oz.Sys.Battery.Present)
+    $wrap = [System.Windows.Controls.WrapPanel]::new()
+    $wrap.MaxWidth = 380
+    $names = [ordered]@{ Date = (T 'Date and time'); Cpu = 'CPU'; Ram = 'RAM'; Net = (T 'Network'); Vol = (T 'Volume'); Bat = (T 'Battery') }
+    foreach ($k in $names.Keys) {
+        if ($k -eq 'Bat' -and -not $hasBat) { continue }
+        $c = [System.Windows.Controls.CheckBox]::new()
+        $c.Style = Get-OzRes 'Tick'
+        $c.Content = $names[$k]
+        $c.Tag = $k
+        $c.Margin = New-OzThickness '0,0,16,6'
+        $c.IsChecked = (@($Oz.ThemeCfg.BarItems) -contains $k)
+        $c.Add_Click({
+                $tag = [string]$this.Tag
+                $on = [bool]$this.IsChecked
+                $had = @($Oz.ThemeCfg.BarItems)
+                # kept in the bar's own order
+                $items = @($Oz.ThemeBarItems | Where-Object { ($_ -eq $tag -and $on) -or ($_ -ne $tag -and $had -contains $_) })
+                Set-OzThemeValue 'BarItems' $items
+            })
+        [void]$wrap.Children.Add($c)
+    }
+    [void]$p.Children.Add((New-OzThemeRow (T 'Status bar shows') (T 'Tick each pill you want. The settings button is always there.') $wrap))
+    $sizes = @(@{ Value = 'S'; Label = (T 'SMALL') }, @{ Value = 'M'; Label = (T 'MEDIUM') }, @{ Value = 'L'; Label = (T 'LARGE') })
+    [void]$p.Children.Add((New-OzThemeRow (T 'Dock icon size') (T 'Bigger icons are easier to hit on large screens.') (New-OzThemeChips -Key 'DockSize' -Items $sizes)))
+    $bgs = @(
+        @{ Value = 'Glass'; Label = (T 'GLASS'); Tip = (T 'More of the wallpaper shows through.') }
+        @{ Value = 'Normal'; Label = (T 'NORMAL'); Tip = (T 'The look as designed.') }
+        @{ Value = 'Solid'; Label = (T 'SOLID'); Tip = (T 'No see-through: easiest to read on busy wallpapers.') })
+    [void]$p.Children.Add((New-OzThemeRow (T 'Background') (T 'How see-through the status bar, the dock and the wallpaper picker are.') (New-OzThemeChips -Key 'BgStyle' -Items $bgs)))
+}
+
+function Show-OzThemeWallFit {
+    $p = $Oz.UI.ThemeWallFitPanel
+    if (-not $p) { return }
+    $p.Children.Clear()
+    $fits = @(
+        @{ Value = 'Fill'; Label = (T 'FILL'); Tip = (T 'Covers the screen, cutting the edges if needed.') }
+        @{ Value = 'Fit'; Label = (T 'FIT'); Tip = (T 'Shows the whole picture, with bars if needed.') }
+        @{ Value = 'Stretch'; Label = (T 'STRETCH'); Tip = (T 'Stretches the picture to the screen.') }
+        @{ Value = 'Center'; Label = (T 'CENTER'); Tip = (T 'Original size in the middle.') }
+        @{ Value = 'Span'; Label = (T 'SPAN'); Tip = (T 'One picture across all screens.') })
+    [void]$p.Children.Add((New-OzThemeChips -Key 'WallFit' -Items $fits))
+}
+
 function Update-OzThemePreview {
     # A small picture of the desktop with these settings: wallpaper, clock, bar and dock
     $ui = $Oz.UI
     $layer = $ui.ThemePreviewLayer
     if (-not $layer -or -not $Oz.ThemeCfg) { return }
     $cfg = $Oz.ThemeCfg
-    $look = $Oz.ThemeLooks[[string]$cfg.Look]
+    $look = Get-OzThemeColors $Oz.ThemeLooks[[string]$cfg.Look] ([string]$cfg.BgStyle)
+    $look.Edge = $Oz.ThemeLooks[[string]$cfg.Look].Edge
+    # the preview shows the clock's screen, with its own shape; the bar and the dock appear when they are on it
+    $screens = @($Oz.ThemeScreens)
+    if (-not $screens.Count) { $screens = @(Get-OzScreens); $Oz.ThemeScreens = $screens }
+    $copies = @(Get-OzThemeCopies $cfg $screens)
+    $clockAt = ($copies | Where-Object Part -EQ 'Clock' | Select-Object -First 1).At
+    $scr = Get-OzThemeScreenOf $clockAt $screens
+    $onHere = { param($part) [bool](@($copies | Where-Object { $_.Part -eq $part -and $_.At -eq $clockAt }).Count) }
     $box = $ui.ThemePreviewBox
     $pw = if ($box.ActualWidth -gt 40) { $box.ActualWidth - 2 } else { 380 }
-    $box.Height = [math]::Round($pw * 9 / 16) + 2
+    $ratio = if ($scr -and $scr.W -gt 0) { [math]::Min(0.75, [math]::Max(0.36, $scr.H / $scr.W)) } else { 9 / 16 }
+    $box.Height = [math]::Round($pw * $ratio) + 2
 
     # wallpaper picture (read once per file change)
     $luma = Get-OzWallLuma $cfg
-    $key = '{0}|{1}' -f $luma.File, $(if ($luma.File -and [IO.File]::Exists($luma.File)) { (Get-Item -LiteralPath $luma.File).LastWriteTimeUtc.Ticks } else { 0 })
+    $key = '{0}|{1}' -f $luma.File, $(if ($luma.File -and [IO.File]::Exists($luma.File)) { [IO.File]::GetLastWriteTimeUtc($luma.File).Ticks } else { 0 })
     if ($Oz.ThemePreviewKey -ne $key) {
         $Oz.ThemePreviewKey = $key
         $ui.ThemePreviewImg.Source = $null
         if ($luma.File) {
             try {
-                $bi = New-Object System.Windows.Media.Imaging.BitmapImage
-                $bi.BeginInit()
-                $bi.CacheOption = [System.Windows.Media.Imaging.BitmapCacheOption]::OnLoad
-                $bi.DecodePixelWidth = 720
-                $bi.StreamSource = New-Object IO.MemoryStream (, [IO.File]::ReadAllBytes($luma.File))
-                $bi.EndInit()
-                $bi.Freeze()
-                $ui.ThemePreviewImg.Source = $bi
+                $pre = $Oz.WallPrefetch
+                $ui.ThemePreviewImg.Source = if ($pre -and $pre.Key -eq $key -and $pre.Image) { $pre.Image } else { New-OzWallPicture $luma.File }
             } catch { }
         }
     }
@@ -12326,7 +13068,7 @@ function Update-OzThemePreview {
 
     # screen size in real pixels, which is what Rainmeter uses
     $dpi = (Get-OzThemeScaleNow) / 100
-    $sw = [math]::Max(800, [System.Windows.SystemParameters]::PrimaryScreenWidth * $dpi)
+    $sw = if ($scr -and $scr.W -gt 0) { [math]::Max(800, $scr.W) } else { [math]::Max(800, [System.Windows.SystemParameters]::PrimaryScreenWidth * $dpi) }
     $f = $pw / $sw
     $s = [double]$cfg.Scale / 100
     $toHex = { param($rgb) $c = @($rgb -split ',' | ForEach-Object { [int]$_ }); $a = if ($c.Count -ge 4) { $c[3] } else { 255 }; '#{0:X2}{1:X2}{2:X2}{3:X2}' -f $a, $c[0], $c[1], $c[2] }
@@ -12334,23 +13076,31 @@ function Update-OzThemePreview {
     $inkHex = @($cfg.InkDark, $cfg.InkMid, $cfg.InkLight)[$slot]
     $ink = Get-OzBrush $inkHex
 
-    if ($cfg.Bar) {
-        $bar = New-Object System.Windows.Controls.Grid
+    if ($cfg.Bar -and (& $onHere 'Bar')) {
+        $bar = [System.Windows.Controls.Grid]::new()
         $bar.VerticalAlignment = 'Top'
         $bar.Margin = New-Object System.Windows.Thickness([math]::Max(2, 12 * $s * $f), [math]::Max(2, 8 * $s * $f), [math]::Max(2, 12 * $s * $f), 0)
         $bar.Height = [math]::Max(5, 28 * $s * $f)
-        # same layout as Bar.ini: right cluster, date pill centered or slid left, hidden with no room
+        # same layout as Bar.ini: the pills picked, from the right; the date pill centered or slid
+        # left, and hidden when there is no room for it
         $hasBat = [bool]($Oz.Sys -and $Oz.Sys.Battery -and $Oz.Sys.Battery.Present)
+        $items = @($cfg.BarItems)
         $bw = $sw - 24 * $s
-        $wRight = (454 + $(if ($hasBat) { 86 } else { 0 })) * $s
-        $xCpu = $bw - $wRight
+        $gap = 6 * $s
+        $x = $bw - 34 * $s
+        $pills = @(, @($x, (34 * $s)))
+        foreach ($it in @(@('Bat', 80), @('Vol', 70), @('Net', 128), @('Ram', 112), @('Cpu', 86))) {
+            if ($items -notcontains $it[0] -or ($it[0] -eq 'Bat' -and -not $hasBat)) { continue }
+            $x -= $gap + $it[1] * $s
+            $pills += , @($x, ($it[1] * $s))
+        }
+        $xCpu = $x
         $wMid = 264 * $s
-        $xMid = [math]::Max(102 * $s, [math]::Min(($bw - $wMid) / 2, $xCpu - 6 * $s - $wMid))
-        $pills = @(, @(0, (96 * $s)))
-        if ($xCpu - 6 * $s - $wMid - 102 * $s -ge 0) { $pills += , @($xMid, $wMid) }
-        $pills += , @($xCpu, $wRight)
+        $xMid = [math]::Max(102 * $s, [math]::Min(($bw - $wMid) / 2, $xCpu - $gap - $wMid))
+        $pills += , @(0, (96 * $s))
+        if ($items -contains 'Date' -and $xCpu - $gap - $wMid - 102 * $s -ge 0) { $pills += , @($xMid, $wMid) }
         foreach ($spec in $pills) {
-            $pill = New-Object System.Windows.Controls.Border
+            $pill = [System.Windows.Controls.Border]::new()
             $pill.HorizontalAlignment = 'Left'
             $pill.Margin = New-Object System.Windows.Thickness([math]::Max(0, $spec[0] * $f), 0, 0, 0)
             $pill.Width = $spec[1] * $f
@@ -12362,22 +13112,24 @@ function Update-OzThemePreview {
         }
         [void]$layer.Children.Add($bar)
     }
-    if ($cfg.Dock) {
-        $n = [math]::Max(1, @(Get-OzDockApps $cfg).Count)
-        $dock = New-Object System.Windows.Controls.Border
+    if ($cfg.Dock -and (& $onHere 'Dock')) {
+        $n = [math]::Max(1, @(Get-OzDockApps $cfg $Oz.ThemeDockCatalog).Count)
+        $I = [int]$Oz.ThemeDockSizes[[string]$cfg.DockSize]
+        if (-not $I) { $I = 46 }
+        $dock = [System.Windows.Controls.Border]::new()
         $dock.VerticalAlignment = 'Bottom'; $dock.HorizontalAlignment = 'Center'
-        $dock.Width = (2 * 12 + $n * 46 + ($n - 1) * 12 + 12 + 1 + 12 + 46) * $s * $f
-        $dock.Height = (46 + 24) * $s * $f
+        $dock.Width = (2 * 12 + $n * $I + ($n - 1) * 12 + 12 + 1 + 12 + $I) * $s * $f
+        $dock.Height = ($I + 24) * $s * $f
         $dock.Margin = New-Object System.Windows.Thickness(0, 0, 0, (12 * $s * $f))
         $dock.CornerRadius = New-Object System.Windows.CornerRadius(20 * $s * $f)
         $dock.Background = Get-OzBrush (& $toHex $look.PillBg)
         $dock.BorderBrush = Get-OzBrush (& $toHex $look.PillLine)
         $dock.BorderThickness = New-OzThickness '0.6'
-        $icons = New-Object System.Windows.Controls.StackPanel
+        $icons = [System.Windows.Controls.StackPanel]::new()
         $icons.Orientation = 'Horizontal'; $icons.HorizontalAlignment = 'Center'; $icons.VerticalAlignment = 'Center'
         for ($i = 0; $i -lt $n + 1; $i++) {
-            $ic = New-Object System.Windows.Controls.Border
-            $ic.Width = 46 * $s * $f; $ic.Height = 46 * $s * $f
+            $ic = [System.Windows.Controls.Border]::new()
+            $ic.Width = $I * $s * $f; $ic.Height = $I * $s * $f
             $ic.Margin = New-Object System.Windows.Thickness((6 * $s * $f), 0, (6 * $s * $f), 0)
             $ic.CornerRadius = New-Object System.Windows.CornerRadius(10 * $s * $f)
             $ic.Background = Get-OzBrush $(if ($i -lt $n) { '#55' + $look.Edge.TrimStart('#') } else { '#22FFFFFF' })
@@ -12389,7 +13141,7 @@ function Update-OzThemePreview {
     if ($cfg.Clock) {
         $i = [array]::IndexOf($Oz.ThemePositions, [string]$cfg.Pos)
         $col = $i % 3; $row = [math]::Floor($i / 3)
-        $clock = New-Object System.Windows.Controls.StackPanel
+        $clock = [System.Windows.Controls.StackPanel]::new()
         $clock.HorizontalAlignment = @('Left', 'Center', 'Right')[$col]
         $clock.VerticalAlignment = @('Top', 'Center', 'Bottom')[$row]
         $mx = if ($col -eq 1) { 0 } else { $cfg.MarginX * $f }
@@ -12404,7 +13156,7 @@ function Update-OzThemePreview {
         $spaced = { param($t, [int]$n) ($t.ToCharArray() | ForEach-Object { [string]$_ }) -join ([string][char]0x200A * $n) }
         $add = {
             param([string]$Text, [double]$Size, [string]$Font, [string]$Weight, $Brush, [double]$Top = 0)
-            $tb = New-Object System.Windows.Controls.TextBlock
+            $tb = [System.Windows.Controls.TextBlock]::new()
             $tb.Text = $Text
             $tb.FontSize = [math]::Max(4, $Size * $s * $f * 1.33)
             $tb.FontFamily = New-Object System.Windows.Media.FontFamily($Font)
@@ -12450,6 +13202,7 @@ function Update-OzThemePreview {
     if ($cfg.AutoInk) {
         $ui.ThemePreviewNote.Text = T 'Text color: {0}. Wallpaper brightness under the clock: {1}%.' $names[$slot] ([int][math]::Round($luma.Brightness * 100))
     } else { $ui.ThemePreviewNote.Text = T 'Text color: {0} (fixed).' $names[$slot] }
+    if ($screens.Count -gt 1 -and $scr) { $ui.ThemePreviewNote.Text += '  ' + (T 'Shown: {0}, the clock screen.' (Get-OzThemeScreenLabel $scr)) }
 }
 
 function Show-OzThemes {
@@ -12461,7 +13214,11 @@ function Show-OzThemes {
     Show-OzThemeWidgets
     Show-OzThemeClockPanel
     Show-OzThemeWalls
+    Show-OzThemeWallFit
     Show-OzThemeDock
+    Show-OzThemeBarDock
+    $Oz.ThemeScreens = @(Get-OzScreens)
+    Show-OzThemeScreens
     Update-OzThemePreview
     Update-OzThemeButtons
 }
@@ -12635,7 +13392,7 @@ function Initialize-OzEvents {
         })
 
     # games
-    $ui.BtnScanGames.Add_Click({ Invoke-OzSafe 'Game scan' { $Oz.GamesShown = $true; Show-OzGames (Get-OzGameScan) } })
+    $ui.BtnScanGames.Add_Click({ Invoke-OzSafe 'Game scan' { $Oz.GamesShown = $true; Show-OzGames (Get-OzGameScan -Background) } })
 
     # themes
     $ui.BtnRmGet.Add_Click({ Open-OzLink $Oz.RainmeterUrl })
@@ -12651,10 +13408,19 @@ function Initialize-OzEvents {
             }
         })
     $ui.BtnDockAdd.Add_Click({ Invoke-OzSafe 'Themes' { Add-OzThemeDockApp } })
+    $ui.BtnScreenIdentify.Add_Click({ Invoke-OzSafe 'Themes' { Show-OzScreenNumbers } })
+    $ui.BtnScreenCheck.Add_Click({
+            Invoke-OzSafe 'Themes' {
+                $Oz.ThemeScreens = @(Get-OzScreens)
+                Show-OzThemeScreens
+                Request-OzThemePreview
+                Write-OzLog (T '{0} screen(s) connected.' @($Oz.ThemeScreens).Count) 'OK'
+            }
+        })
     $ui.ThemeTabGeneral.Add_Checked({ if ($Oz.ThemesShown) { Show-OzThemeClockPanel } })
     $ui.ThemeTabLook.Add_Checked({ if ($Oz.ThemesShown) { Show-OzThemeClockPanel } })
     $ui.ThemePreviewBox.Add_SizeChanged({
-            if ($Oz.ThemesShown -and [math]::Abs($_.NewSize.Width - $_.PreviousSize.Width) -gt 2) { try { Update-OzThemePreview } catch { } }
+            if ($Oz.ThemesShown -and [math]::Abs($_.NewSize.Width - $_.PreviousSize.Width) -gt 2) { Request-OzThemePreview }
         })
 
     # debloat
@@ -12760,6 +13526,7 @@ function Initialize-OzEvents {
     $Oz.Timer.Interval = [TimeSpan]::FromMilliseconds(1000)
     $Oz.Timer.Add_Tick({
             Show-OzQueuedLog
+            if ($Oz.PageRetry -and -not $Oz.Busy) { Request-OzPageFill }
             $d = $Oz.LiveData
             if ($d -and -not [object]::ReferenceEquals($d, $Oz.LiveShown) -and $Oz.UI.PageDash.Visibility -eq 'Visible') {
                 $Oz.LiveShown = $d
@@ -12836,7 +13603,9 @@ function Invoke-OzScan {
     Start-OzLive
     $Oz.LiveWanted = ($Oz.UI.PageDash.Visibility -eq 'Visible')
     Set-OzBusy $false
-    if ($Oz.UI.PageGames.Visibility -eq 'Visible' -and -not $Oz.GamesShown) { $Oz.GamesShown = $true; Show-OzGames (Get-OzGameScan) }
+    Start-OzWallPrefetch
+    # a page opened during the scan (Games, Tools, Drivers...) is filled now
+    if ($Oz.PageRetry) { Request-OzPageFill }
 
     $rows = @($Oz.Rows.Values)
     $active = @($rows | Where-Object { $_.Applicable -and $_.Applied }).Count
@@ -12853,6 +13622,7 @@ function Initialize-OzWindow {
     # Builds the main window and wires every control. Used by Start-Ozzyhn and by the CI UI test,
     # so the test opens exactly the window users get.
     Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase
+    $Oz.ResCache = @{}
     $Oz.Window = [Windows.Markup.XamlReader]::Parse($Oz.Xaml)
     foreach ($m in [regex]::Matches($Oz.Xaml, 'x:Name="(\w+)"')) {
         $n = $m.Groups[1].Value

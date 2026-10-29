@@ -86,14 +86,6 @@ function Set-Size([int]$W, [int]$H) {
     Wait-Ui 400
 }
 
-# ---------- open the window and let the startup scan finish ----------
-$win.Show()
-Wait-Ui 500
-Wait-Idle 180
-if ($Oz.Sys) { Pass "hardware scan finished: $($Oz.Sys.Score.TierName), $($Oz.Rows.Count) tweak rows" } else { Fail 'The hardware scan did not finish' }
-
-$pages = 'Dash', 'Tweaks', 'Profiles', 'Games', 'Themes', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log'
-
 # ---------- speed: how long each click keeps the window from answering ----------
 # A timer beats every few milliseconds on the window's thread. The longest gap between two beats
 # while a click is handled is how long the window was frozen (no hover, no scrolling, no clicks).
@@ -124,6 +116,19 @@ function Measure-Click([string]$Name, [scriptblock]$Do, [int]$Budget = 0) {
     $t2 = $script:Clock.Elapsed.TotalMilliseconds
     $script:Speed.Add([pscustomobject]@{ Step = $Name; Freeze = [int]$freeze; Done = [int]($t2 - $t0); Budget = $Budget })
 }
+# ---------- open the window and let the startup scan finish ----------
+# (measured too: the user can already click while the hardware scan runs)
+$script:Beat.Last = $script:Clock.Elapsed.TotalMilliseconds
+$script:Beat.Max = 0.0
+$t0 = $script:Clock.Elapsed.TotalMilliseconds
+$win.Show()
+Wait-Ui 500
+Wait-Idle 180
+$script:Speed.Add([pscustomobject]@{ Step = 'startup until ready'; Freeze = [int]$script:Beat.Max; Done = [int]($script:Clock.Elapsed.TotalMilliseconds - $t0); Budget = 0 })
+if ($Oz.Sys) { Pass "hardware scan finished: $($Oz.Sys.Score.TierName), $($Oz.Rows.Count) tweak rows" } else { Fail 'The hardware scan did not finish' }
+
+$pages = 'Dash', 'Tweaks', 'Profiles', 'Games', 'Themes', 'Debloat', 'Drivers', 'Tools', 'Backup', 'Log'
+
 function Find-Child($Root, [scriptblock]$Where) {
     foreach ($c in [System.Windows.LogicalTreeHelper]::GetChildren($Root)) {
         if ($c -isnot [System.Windows.DependencyObject]) { continue }
@@ -254,6 +259,33 @@ foreach ($pair in @(@('Style', 'Blade'), @('Pos', 'BR'), @('Look', 'neon'), @('A
 if ($Oz.ThemeDirty -and $Oz.UI.ThemeStatus.Text) { Pass "settings changes are marked as not applied: $($Oz.UI.ThemeStatus.Text)" } else { Fail 'THEMES page did not mark changes as not applied' }
 if (@($Oz.UI.ThemePreviewLayer.Children).Count -ge 2) { Pass 'theme preview draws the clock and dock' } else { Fail "theme preview has $(@($Oz.UI.ThemePreviewLayer.Children).Count) parts" }
 Save-Shot 'themes-changed' $Oz.UI.PageThemes.Content
+# SCREENS card, IDENTIFY, status bar items, dock size, background, picture fit
+$nScreens = @($Oz.ThemeScreens).Count
+if ($nScreens -ge 1 -and @($Oz.UI.ThemeScreenPanel.Children).Count -ge 3 -and $Oz.UI.ThemeScreenMap.Child.Children.Count -eq $nScreens) { Pass "SCREENS card: $nScreens screen(s), a row for the clock, the bar and the dock" }
+else { Fail "SCREENS card: $nScreens screen(s), $(@($Oz.UI.ThemeScreenPanel.Children).Count) rows" }
+Invoke-OzSafe 'Themes' { Show-OzScreenNumbers }
+Wait-Ui 300
+if (@($Oz.IdentifyWindows).Count -eq $nScreens -and @($Oz.IdentifyWindows | Where-Object { $_.IsVisible }).Count -eq $nScreens) { Pass 'IDENTIFY shows a number on every screen' } else { Fail "IDENTIFY showed $(@($Oz.IdentifyWindows).Count) number(s) for $nScreens screen(s)" }
+if (@($Oz.IdentifyWindows).Count) { Save-Shot 'themes-identify' $Oz.IdentifyWindows[0] }
+Wait-Ui 3200
+if (@($Oz.IdentifyWindows).Count) { Fail 'IDENTIFY numbers were still open after 3 seconds' } else { Pass 'IDENTIFY numbers close by themselves' }
+Set-OzThemeValue 'Bar' $true
+Set-OzThemeValue 'BarItems' @('Cpu', 'Ram')
+Set-OzThemeValue 'DockSize' 'L'
+Set-OzThemeValue 'BgStyle' 'Glass'
+Set-OzThemeValue 'WallFit' 'Fit'
+Set-OzThemeValue 'ScreenBar' 'all'
+Wait-Ui 300
+$pbar = @($Oz.UI.ThemePreviewLayer.Children | Where-Object { $_ -is [System.Windows.Controls.Grid] }) | Select-Object -First 1
+# wallpapers button + CPU + RAM + settings button, no date pill
+if ($pbar -and $pbar.Children.Count -eq 4) { Pass 'preview: the status bar shows only the picked items' } else { Fail "preview: the status bar has $(if ($pbar) { $pbar.Children.Count } else { 'no' }) pills (expected 4)" }
+$fitChip = Find-Child $Oz.UI.ThemeWallFitPanel { param($c) $c -is [System.Windows.Controls.RadioButton] -and $c.Tag.Value -eq 'Fit' }
+if ($fitChip -and $fitChip.IsChecked) { Pass 'picture fit chips follow the setting' } else { Fail 'picture fit chip FIT is not checked' }
+Save-Shot 'themes-options' $Oz.UI.PageThemes.Content
+Set-OzThemeValue 'BarItems' @($Oz.ThemeBarItems)
+Set-OzThemeValue 'ScreenBar' 'main'
+Set-OzThemeValue 'BgStyle' 'Normal'
+Wait-Ui 200
 # A job that returns several objects: the result is read item by item (APPLY / REMOVE THEME)
 $jr = Get-OzJobResult (Invoke-OzJob -ScriptBlock { [pscustomobject]@{ Path = 'a' }; [pscustomobject]@{ Path = 'b' }; [pscustomobject]@{ Ok = $false; Msg = 'boom' } })
 if ($jr -and $jr.Ok -eq $false -and $jr.Msg -eq 'boom') { Pass 'background job results are read one by one' } else { Fail "background job result read wrong: $($jr | ConvertTo-Json -Compress)" }
